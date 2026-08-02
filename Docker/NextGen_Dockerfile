@@ -1,0 +1,109 @@
+# NextGen (NGIAB) workflow container.
+#
+# Built on the official CIROH NextGen In A Box image, which provides the NextGen
+# engine and t-route inside a virtualenv at /ngen/.venv. It does NOT ship
+# ngiab_data_cli — that comes from the separate ngiab_data_preprocess package,
+# installed below in its own venv. This layer also adds the evaluation and
+# calibration stack the notebooks use, plus curl and wget (PegasusLite needs
+# them to fetch the worker package before the job script ever runs).
+#
+# Build:
+#   docker build -t kthare10/nextgen-workflow:latest -f Docker/NextGen_Dockerfile .
+#   docker push kthare10/nextgen-workflow:latest
+#
+# Pinned to a release tag rather than :latest so a rebuild is reproducible.
+# awiciroh/ciroh-ngen-image publishes v1.9.0 (newest release at time of writing),
+# plus per-architecture variants (latest-amd64 / latest-arm64) if the multi-arch
+# manifest gives trouble on your worker nodes.
+#   curl -s https://hub.docker.com/v2/repositories/awiciroh/ciroh-ngen-image/tags
+
+FROM awiciroh/ciroh-ngen-image:v1.9.0
+
+USER root
+
+ENV PYTHONUNBUFFERED=1
+
+# The NGIAB image is Rocky Linux, so packages come from dnf, not apt.
+# curl/wget: required by PegasusLite. procps-ng: useful when debugging a job
+# that is still running. --allowerasing lets full curl replace Rocky's
+# preinstalled curl-minimal without a conflict.
+RUN dnf install -y --allowerasing \
+        curl wget git procps-ng \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf
+
+# Analysis / evaluation / calibration additions used by the wrapper scripts,
+# installed into the NGIAB virtualenv so a single interpreter has both the model
+# bindings (pyngiab) and the analysis libraries. The venv ships without pip
+# (NGIAB creates it with uv), so install with the uv binary the base image
+# already provides.
+#
+# Only packages NOT already in the v1.9.0 venv are listed — it already carries
+# newer geopandas/xarray/netCDF4/pandas/numpy/scikit-learn/matplotlib/pyarrow,
+# and re-pinning those would downgrade the stack ngen and ngiab_data_cli were
+# built against. s3fs is pinned to match the venv's fsspec 2026.4.0 (the two
+# are version-locked); verified against v1.9.0 that this layer only adds
+# packages and changes nothing pre-installed.
+RUN /root/.cargo/bin/uv pip install --no-cache --python /ngen/.venv/bin/python \
+        "dataretrieval==1.0.11" \
+        "spotpy==1.6.2" \
+        "s3fs==2026.4.0" \
+        "rioxarray==0.19.0"
+
+# pyngiab is the paper's thin wrapper around /dmod/bin/ngen-serial|parallel
+# (github.com/fbaig/ciroh_pyngiab; the paper's JupyterHub image carries it at
+# /ngen/pyngiab, this image does not). It declares zero dependencies, so it is
+# safe inside /ngen/.venv. Pinned to the latest commit at time of writing.
+RUN /root/.cargo/bin/uv pip install --no-cache --python /ngen/.venv/bin/python \
+        "pyngiab @ git+https://github.com/fbaig/ciroh_pyngiab@f17e6fc042ddd0d7d6dad84d211ad104e112a211"
+
+# PEGASUS PATCH (upstream bug, present at the pinned commit): PyNGIAB's
+# _check_dependencies returns False when the dependency versions are valid on
+# the FIRST probe — the success path only exists inside the venv-retry branch,
+# so a correct environment (like this image, where /ngen/.venv/bin leads PATH)
+# is rejected with "Appropriate package versions required for 'ngen' not
+# found". Change the fall-through `return False` to `return valid_env`. The
+# assert makes the build fail loudly if upstream changes and the patch no
+# longer applies.
+RUN /ngen/.venv/bin/python -c "\
+import pyngiab.pyngiab as m, pathlib; \
+p = pathlib.Path(m.__file__); s = p.read_text(); \
+old = '                pass\n        return False'; \
+assert s.count(old) == 1, f'pyngiab patch target not found ({s.count(old)} matches)'; \
+p.write_text(s.replace(old, '                pass\n        return valid_env'))" && \
+    /ngen/.venv/bin/python -c "\
+from pyngiab import PyNGIAB; import os; os.makedirs('/tmp/smoke', exist_ok=True); \
+PyNGIAB('/tmp/smoke'); print('pyngiab dependency check passes')"
+
+# ngiab_data_preprocess provides the `python -m ngiab_data_cli` entrypoint the
+# subset/forcings/realization wrappers call. It cannot share /ngen/.venv — its
+# resolver would downgrade xarray, zarr, netCDF4, fsspec and s3fs there — so it
+# gets an isolated venv, and the wrappers find it via NGIAB_CLI_PYTHON (see
+# bin/lib/ngiab_pegasus.py). Pinned; the paper's notebooks predate this release,
+# so bump deliberately, not by rebuild.
+RUN /root/.cargo/bin/uv venv --python /ngen/.venv/bin/python3 /opt/preprocess && \
+    /root/.cargo/bin/uv pip install --no-cache --python /opt/preprocess/bin/python \
+        "ngiab_data_preprocess==4.9.1"
+ENV NGIAB_CLI_PYTHON=/opt/preprocess/bin/python
+
+# TEEHR is deliberately NOT installed. Every available version (0.4.6 through
+# 0.6.6) forces downgrades of packages the NGIAB stack depends on (pyarrow
+# 24->20, pydantic 2->1 or vice versa, zarr 3->2), so installing it into
+# /ngen/.venv would corrupt the engine's own dependencies. The workflow copes:
+# bin/teehr_evaluation.py's TEEHR path is not wired up yet and always uses its
+# pandas fallback. If TEEHR is wired up later, give it an isolated venv
+# (uv venv /opt/teehr && uv pip install --python /opt/teehr/bin/python teehr)
+# and add java-17-openjdk-headless back to the dnf layer for its Spark session.
+
+# Pegasus invokes the wrapper scripts with the system python3, which must be able
+# to import the vendored support modules staged into the job directory. Make the
+# NGIAB virtualenv the default interpreter so wrappers and pyngiab agree.
+ENV PATH="/ngen/.venv/bin:${PATH}"
+
+# The base image sets ENTRYPOINT /ngen/HelloNGEN.sh (its interactive guide),
+# which would swallow any `docker run ... <command>` as guide arguments. Reset
+# it so this image behaves like a normal command container. Singularity/
+# PegasusLite never used the ENTRYPOINT, so cluster jobs are unaffected.
+ENTRYPOINT []
+WORKDIR /data
+CMD ["/bin/bash"]

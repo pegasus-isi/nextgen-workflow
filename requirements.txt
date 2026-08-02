@@ -1,0 +1,14 @@
+# Submit-host requirements for generating the workflow.
+# The runtime stack lives in the container (see Docker/NextGen_Dockerfile).
+pegasus-wms.api>=5.0.0
+
+# Optional: only needed to run bin/ scripts directly outside the container
+# (see run_manual.sh). The container already provides these.
+# dataretrieval==1.0.11
+# pandas==2.2.2
+# numpy==1.26.4
+# matplotlib==3.8.4
+# geopandas==0.14.4
+# xarray==2024.3.0
+# netCDF4==1.6.5
+# spotpy==1.6.2

@@ -1,0 +1,6 @@
+# USGS gage IDs to process, one per line. Blank lines and # comments ignored.
+# The paper's demo basin:
+gage-10109001
+# Add more to scatter across basins, e.g.:
+# gage-10154200
+# gage-01427207

@@ -1,0 +1,23 @@
+.venv/
+venv/
+scratch/
+output/
+output.tgz
+workflow.yml
+*.pyc
+__pycache__/
+sites.yml
+replicas.yml
+transformations.yml
+pegasus.properties
+.pytest_cache/
+manual_test*/
+*.simg
+braindump.yml
+.DS_Store
+
+# Local-only: the published paper PDF is copyrighted (Elsevier) and must not
+# be redistributed in a public repository; fetch it via
+# https://doi.org/10.1016/j.envsoft.2026.107031
+references/nassar2026-envsoft-107031.pdf
+.idea/
