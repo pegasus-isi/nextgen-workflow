@@ -20,6 +20,11 @@ Notebooks: HydroShare resource
 The conversion plan, including scope constraints and validation gates, is in
 [`SPEC.md`](SPEC.md).
 
+Repo: https://github.com/pegasus-isi/nextgen-workflow · License:
+[Apache-2.0](LICENSE). The published paper PDF is not distributed here
+(copyright); results extracted from it are cited in
+[`PAPER_COMPARISON.md`](PAPER_COMPARISON.md) with the DOI.
+
 **Status (2026-08-01): every branch validated under Pegasus, and the
 paper-matching run is complete.** run0005 was the first 100%-clean DAG
 (38/38 nodes: prep, model, both evaluations, calibration, calibrated
