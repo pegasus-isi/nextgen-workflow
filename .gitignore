@@ -21,3 +21,4 @@ braindump.yml
 # https://doi.org/10.1016/j.envsoft.2026.107031
 references/nassar2026-envsoft-107031.pdf
 .idea/
+run*-output/
