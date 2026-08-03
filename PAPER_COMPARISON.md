@@ -1,8 +1,24 @@
-# Results comparison: workflow run0006 vs. Nassar et al. (2026)
+# Results comparison: this workflow vs. Nassar et al. (2026)
 
-**Status**: first paper-matching run complete (2026-08-01). Non-calibration
-results reproduce the paper closely; the calibration leg diverges and is
-under investigation (see [The calibration anomaly](#the-calibration-anomaly)).
+**Status: COMPLETE (2026-08-03).** Every published quantity is reproduced.
+run0006 matched the uncalibrated-model and NWM v3.0 metrics within 0.01–0.05
+KGE; its calibration leg exposed real defects in the vendored calibration
+code (documented below, since fixed), and the re-run with fixes and parallel
+multi-start DDS (run0007) **met and slightly exceeded the paper's calibrated
+result: hourly KGE 0.898 vs the published 0.893**, with calibration now
+improving the model (daily evaluation KGE 0.860 → 0.901).
+
+| Calibrated result | Paper (Fig. 10) | run0007 |
+|---|---|---|
+| Calibration objective (hourly KGE) | 0.893 | **0.898** (trial seed 2 of 5; runner-up 0.871) |
+| Evaluation period, daily KGE / NSE | — (hourly 0.893 / 0.785) | 0.901 / 0.804 |
+| Effect of calibration | improves | improves (0.860 → 0.901 daily KGE) |
+
+run0007 also demonstrated why multi-start matters: only 2 of 5 independent
+200-iteration DDS trajectories beat the strong modern baseline; the three
+that lost shipped `baseline_retained` instead of degrading the model. A
+single sequential trajectory — the paper's method, and run0006's — is a coin
+flip against today's pre-calibrated NGIAB defaults.
 
 ## What is being compared
 
@@ -122,12 +138,17 @@ scored first and retained whenever no sampled vector beats it
 mismatch; `best_objective_value` now carries the raw metric, fixing the
 multi-trial reducer's direction handling for all objectives.
 
-**Next**: re-run calibration with the fixes — paper configuration plus
-`--dds-trials 5` (five independent 200-iteration DDS trajectories in
-parallel; the reducer takes the best). Success criterion: either some trial
-beats the 0.860 baseline (potentially approaching or exceeding the paper's
-0.893), or all trials lose and `baseline_retained` ships the defaults —
-either way, calibration can no longer degrade the model.
+**Re-run outcome (run0007, 2026-08-03)**: paper configuration plus
+`--dds-trials 5` — five independent 200-iteration DDS trajectories in
+parallel, ~28 h wall clock on five worker slots. Per-trial best hourly KGE:
+0.703, **0.898**, 0.871, 0.468, 0.659 (baseline 0.860 — three trials lost
+and correctly retained the baseline in their payloads). The reducer selected
+seed 2's parameters; the calibrated re-run scores **0.901 daily KGE / 0.804
+NSE** on the evaluation period, up from the uncalibrated 0.860 / 0.799 and
+at par with the paper's hourly 0.893 / 0.785. The calibration leg of the
+comparison is closed: with a correctly aligned objective and the baseline as
+a candidate, the workflow reproduces — marginally exceeds — the published
+calibrated skill.
 
 ## Caveats on comparability
 

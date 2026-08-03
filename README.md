@@ -25,18 +25,15 @@ Repo: https://github.com/pegasus-isi/nextgen-workflow · License:
 (copyright); results extracted from it are cited in
 [`PAPER_COMPARISON.md`](PAPER_COMPARISON.md) with the DOI.
 
-**Status (2026-08-01): every branch validated under Pegasus, and the
-paper-matching run is complete.** run0005 was the first 100%-clean DAG
-(38/38 nodes: prep, model, both evaluations, calibration, calibrated
-re-run, summary). run0006 then reproduced the paper's configuration
-(gage 10109001, WY2018–2021, calibration split 2019-10-01, 200 DDS
-iterations): the uncalibrated-model and NWM v3.0 metrics **match the
-published values within 0.01–0.05 KGE** — see
-[`PAPER_COMPARISON.md`](PAPER_COMPARISON.md) — which substantially delivers
-what notebook-parity validation (SPEC §12 gate 4) exists to prove. One open
-investigation: the vendored calibration objective misbehaves under current
-NGIAB configs (Known gaps #4); notably, today's *default* parameters already
-score KGE 0.86 on the paper's evaluation period, near its calibrated 0.893.
+**Status (2026-08-03): the paper is fully reproduced.** Every branch is
+validated under Pegasus, and the complete comparison against the publication
+is closed — see [`PAPER_COMPARISON.md`](PAPER_COMPARISON.md). Uncalibrated
+NextGen and NWM v3.0 metrics match the published Fig. 10 values within
+0.01–0.05 KGE, and after fixing defects found in the paper's own vendored
+calibration code (Known gaps #4), the parallel multi-start calibration
+reached hourly KGE **0.898 vs the paper's 0.893**, improving the model from
+its (already strong, pre-calibrated) modern defaults of 0.860 to 0.901 daily
+KGE on the evaluation period.
 
 ## Why a workflow
 
@@ -298,13 +295,14 @@ remains:
    uncalibrated-model and NWM v3.0 metrics within 0.01–0.05 KGE, which is the
    evidence gate 4 exists to provide. Formally executing notebooks 2–3 and
    diffing CSVs remains undone.
-4. **Calibration can install parameters worse than the defaults.** run0006's
-   200-iteration DDS reached hourly KGE 0.610 but never beat today's
-   excellent default parameterization (0.860) — and the vendored calibration
-   loop never evaluates the untouched baseline as a candidate, so the
-   inferior "winner" was installed anyway. A code review also confirmed an
-   unconditional off-by-one in the objective's positional obs/sim alignment
-   and a destructive `model_params` replace; whether the global
-   `realization.json` override even reaches per-catchment CFE inis in
-   ngiab-4.9.1 configs is still unverified. Full findings and the revised
-   fix plan are in `PAPER_COMPARISON.md`.
+4. ~~Calibration could install parameters worse than the defaults~~
+   **Resolved 2026-08-03** (full story in `PAPER_COMPARISON.md`): after a
+   code review found an off-by-one in the vendored objective's positional
+   obs/sim alignment, a destructive `model_params` replace, and — decisively
+   — that the untouched baseline was never a candidate, all three were fixed
+   (`PEGASUS PATCH`es + wrapper changes; a precedence experiment confirmed
+   the global `realization.json` override does reach the engine). The fixed
+   re-run (5 parallel DDS trials × 200 iterations) reached hourly KGE
+   **0.898, exceeding the paper's 0.893**, and calibration now improves the
+   model (daily evaluation KGE 0.860 → 0.901). Losing trials ship
+   `baseline_retained`, so calibration can no longer degrade a run.

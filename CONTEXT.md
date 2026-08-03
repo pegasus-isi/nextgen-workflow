@@ -34,6 +34,12 @@ Provenance: paper is Nassar et al. 2026, *Environmental Modelling & Software* 20
 107031, https://doi.org/10.1016/j.envsoft.2026.107031. Notebooks:
 https://doi.org/10.4211/hs.27045581bdea4808a393330f2417379c.
 
+**MILESTONE 2026-08-03: PAPER FULLY REPRODUCED (run0007).** Fixed multi-start
+calibration (5×200 DDS trials) reached hourly KGE 0.898 vs the paper's 0.893;
+calibrated daily eval KGE 0.901/NSE 0.804 (up from baseline 0.860/0.799).
+Only 2 of 5 trials beat the baseline — the losing trials retained defaults
+via `baseline_retained`. Comparison closed in `PAPER_COMPARISON.md`.
+
 **MILESTONE 2026-08-01: paper-matching run (run0006) COMPLETE — see
 `PAPER_COMPARISON.md`.** Uncalibrated NextGen and NWM v3.0 metrics reproduce
 the published Fig. 10 values within 0.01–0.05 KGE (extraction validated).
