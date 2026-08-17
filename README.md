@@ -96,7 +96,7 @@ Job count is **`12N + 2`** for N gages by default (`8N + 2` with `--calibrate 0`
 ```sh
 # 1. Build the containers (no registry push — Pegasus stages the .sif files).
 #    Apptainer cannot build on macOS and a .sif is single-architecture; build on
-#    a Linux host matching the worker nodes. See ../APPTAINER.md.
+#    a Linux host matching the worker nodes. See APPTAINER.md.
 apptainer build Apptainer/NextGen_Container.sif Apptainer/NextGen_Container.def
 apptainer build Apptainer/Teehr_Container.sif   Apptainer/Teehr_Container.def
 
@@ -112,6 +112,39 @@ pegasus-plan --submit -s condorpool -o local workflow.yml
 pegasus-status <run-dir>
 pegasus-analyzer <run-dir>
 ```
+
+<details>
+<summary>Optional: publish the image to ghcr.io</summary>
+
+Useful for sharing one build across a team or citing an immutable artifact. Needs a
+GitHub token with `write:packages`.
+
+```bash
+echo "$GHCR_TOKEN" | apptainer registry login --username <github-user> \
+    --password-stdin oras://ghcr.io
+
+TAG=$(git rev-parse --short HEAD)
+apptainer push Apptainer/NextGen_Container.sif \
+    oras://ghcr.io/pegasus-isi/nextgen-workflow-nextgen:$TAG
+apptainer push Apptainer/Teehr_Container.sif \
+    oras://ghcr.io/pegasus-isi/nextgen-workflow-teehr:$TAG
+
+# On the submit host, pull back to the path the generator expects
+apptainer pull Apptainer/NextGen_Container.sif \
+    oras://ghcr.io/pegasus-isi/nextgen-workflow-nextgen:$TAG
+apptainer pull Apptainer/Teehr_Container.sif \
+    oras://ghcr.io/pegasus-isi/nextgen-workflow-teehr:$TAG
+```
+
+Two images, so two package names. `Teehr_Container` is x86_64-only (its base
+tag is `awiciroh/ngiab-teehr:x86`).
+
+Do **not** put the `oras://` URL in the transformation catalog — Pegasus supports
+`docker://`, `shub://`, `library://`, `shifter://` and `file://`, not `oras://`.
+Treat ghcr.io as a distribution channel and keep staging the local `.sif`. Details in
+[`APPTAINER.md`](APPTAINER.md).
+
+</details>
 
 ### Options
 
