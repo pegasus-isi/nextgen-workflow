@@ -94,9 +94,11 @@ Job count is **`12N + 2`** for N gages by default (`8N + 2` with `--calibrate 0`
 ## Quick start
 
 ```sh
-# 1. Build and push the container
-docker build -t kthare10/nextgen-workflow:latest -f Docker/NextGen_Dockerfile .
-docker push kthare10/nextgen-workflow:latest
+# 1. Build the containers (no registry push — Pegasus stages the .sif files).
+#    Apptainer cannot build on macOS and a .sif is single-architecture; build on
+#    a Linux host matching the worker nodes. See APPTAINER.md.
+apptainer build Apptainer/NextGen_Container.sif Apptainer/NextGen_Container.def
+apptainer build Apptainer/Teehr_Container.sif   Apptainer/Teehr_Container.def
 
 # 2. Generate the workflow (submit host needs only pegasus-wms.api)
 python3 -m venv .venv && source .venv/bin/activate
@@ -110,6 +112,39 @@ pegasus-plan --submit -s condorpool -o local workflow.yml
 pegasus-status <run-dir>
 pegasus-analyzer <run-dir>
 ```
+
+<details>
+<summary>Optional: publish the image to ghcr.io</summary>
+
+Useful for sharing one build across a team or citing an immutable artifact. Needs a
+GitHub token with `write:packages`.
+
+```bash
+echo "$GHCR_TOKEN" | apptainer registry login --username <github-user> \
+    --password-stdin oras://ghcr.io
+
+TAG=$(git rev-parse --short HEAD)
+apptainer push Apptainer/NextGen_Container.sif \
+    oras://ghcr.io/pegasus-isi/nextgen-workflow-nextgen:$TAG
+apptainer push Apptainer/Teehr_Container.sif \
+    oras://ghcr.io/pegasus-isi/nextgen-workflow-teehr:$TAG
+
+# On the submit host, pull back to the path the generator expects
+apptainer pull Apptainer/NextGen_Container.sif \
+    oras://ghcr.io/pegasus-isi/nextgen-workflow-nextgen:$TAG
+apptainer pull Apptainer/Teehr_Container.sif \
+    oras://ghcr.io/pegasus-isi/nextgen-workflow-teehr:$TAG
+```
+
+Two images, so two package names. `Teehr_Container` is x86_64-only (its base
+tag is `awiciroh/ngiab-teehr:x86`).
+
+Do **not** put the `oras://` URL in the transformation catalog — Pegasus supports
+`docker://`, `shub://`, `library://`, `shifter://` and `file://`, not `oras://`.
+Treat ghcr.io as a distribution channel and keep staging the local `.sif`. Details in
+[`APPTAINER.md`](APPTAINER.md).
+
+</details>
 
 ### Options
 
@@ -126,9 +161,10 @@ pegasus-analyzer <run-dir>
                           (default 1 = single sequential trajectory). N trials
                           use N worker slots without extending wall time
 --hydrofabric-tar PATH    Reuse an existing hydrofabric cache; drops the fetch job
---container-image URI     Override the main container image
---teehr-image URI         Override the teehr_evaluation container
-                          (default docker://kthare10/nextgen-teehr:x86)
+--container-image PATH    Override the main container: a .sif path (default
+                          Apptainer/NextGen_Container.sif) or a registry URI
+--teehr-image PATH        Override the teehr_evaluation container
+                          (default Apptainer/Teehr_Container.sif)
 -e / --execution-site-name, -o / --output, -s / --skip-sites-catalog
 ```
 
@@ -151,8 +187,8 @@ pip install pytest pyyaml && python -m pytest tests/ -v
 # Gate 3: run every step by hand on a 3-month slice, inside the container
 # (superseded in practice by the successful full cluster run on 2026-07-30,
 # but still the cheapest way to shake out a change to a single wrapper)
-docker run --rm -it -v "$PWD":/work -w /work \
-    kthare10/nextgen-workflow:latest bash run_manual.sh
+apptainer exec --bind "$PWD":/work --pwd /work \
+    Apptainer/NextGen_Container.sif bash run_manual.sh
 ```
 
 The strongest correctness check (gate 4) is **notebook parity**: proving the

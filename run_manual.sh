@@ -6,8 +6,11 @@
 # plan/submit cycle. Run it INSIDE the container, where pyngiab and
 # ngiab_data_cli exist:
 #
-#   docker run --rm -it -v "$PWD":/work -w /work \
-#       kthare10/nextgen-workflow:latest bash run_manual.sh
+#   apptainer exec --bind "$PWD":/work --pwd /work \
+#       Apptainer/NextGen_Container.sif bash run_manual.sh
+#
+# (build it first: apptainer build Apptainer/NextGen_Container.sif \
+#      Apptainer/NextGen_Container.def)
 #
 # Override the defaults with environment variables:
 #   GAGE=gage-10109001 START=2020-10-01 END=2020-12-31 bash run_manual.sh

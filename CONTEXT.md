@@ -24,7 +24,7 @@ DAG generation is empirically validated.
 | `bin/lib/` | 4 utility modules **vendored from the paper** + `ngiab_pegasus.py` (new) |
 | `tests/test_dag.py` | 18 generator tests — validation gate 1 |
 | `run_manual.sh` | Step-by-step local run — validation gate 3 |
-| `Docker/NextGen_Dockerfile` | `FROM awiciroh/ciroh-ngen-image:v1.9.0` |
+| `Apptainer/NextGen_Container.def` | `Bootstrap: docker` / `From: awiciroh/ciroh-ngen-image:v1.9.0` (`Docker/NextGen_Dockerfile` retained as a fallback) |
 | `references/notebooks/` | The paper's 5 original notebooks + HydroShare README |
 | `references/original_utils/` | **Unpatched** copies of the vendored modules |
 | `SPEC.md` | The conversion plan (moved here from `../agu/`) |
@@ -91,7 +91,7 @@ Ordered by how likely they are to bite. Also in `README.md`.
    `teehr_evaluation` runs real TEEHR in `kthare10/nextgen-teehr:x86`
    (second entry in the transformation catalog, `--teehr-image` to override) —
    a thin derivative of CIROH's `awiciroh/ngiab-teehr:x86` adding curl/wget,
-   which PegasusLite needs in-container (`Docker/Teehr_Dockerfile`; found
+   which PegasusLite needs in-container (`Apptainer/Teehr_Container.def`; found
    2026-07-31 when the first Pegasus teehr job failed to bootstrap its worker
    package). TEEHR still cannot live in the engine venv. **2026-07-31 late:**
    the pandas fallback now ALSO fetches the NWM v3.0 benchmark directly
@@ -116,8 +116,8 @@ Ordered by how likely they are to bite. Also in `README.md`.
    from github.com/fbaig/ciroh_pyngiab pinned to f17e6fc, **with a PEGASUS
    PATCH**: upstream `_check_dependencies` returns False when dependencies are
    valid on the first probe — only the venv-retry branch can return True — so
-   the Dockerfile rewrites the fall-through `return False` to
-   `return valid_env`; see the Dockerfile comment).
+   `Apptainer/NextGen_Container.def`'s `%post` rewrites the fall-through
+   `return False` to `return valid_env`; see the comment there).
 5. ~~Calibration untested~~ **Validated offline 2026-07-31** (calibrate →
    apply_params chain in the container: 6 DDS reps, per-module best_params
    JSON, 11 CFE + 7 NoahOWP params applied to realization.json, calibrated
