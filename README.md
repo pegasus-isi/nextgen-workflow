@@ -94,9 +94,11 @@ Job count is **`12N + 2`** for N gages by default (`8N + 2` with `--calibrate 0`
 ## Quick start
 
 ```sh
-# 1. Build and push the container
-docker build -t kthare10/nextgen-workflow:latest -f Docker/NextGen_Dockerfile .
-docker push kthare10/nextgen-workflow:latest
+# 1. Build the containers (no registry push — Pegasus stages the .sif files).
+#    Apptainer cannot build on macOS and a .sif is single-architecture; build on
+#    a Linux host matching the worker nodes. See ../APPTAINER.md.
+apptainer build Apptainer/NextGen_Container.sif Apptainer/NextGen_Container.def
+apptainer build Apptainer/Teehr_Container.sif   Apptainer/Teehr_Container.def
 
 # 2. Generate the workflow (submit host needs only pegasus-wms.api)
 python3 -m venv .venv && source .venv/bin/activate
@@ -126,9 +128,10 @@ pegasus-analyzer <run-dir>
                           (default 1 = single sequential trajectory). N trials
                           use N worker slots without extending wall time
 --hydrofabric-tar PATH    Reuse an existing hydrofabric cache; drops the fetch job
---container-image URI     Override the main container image
---teehr-image URI         Override the teehr_evaluation container
-                          (default docker://kthare10/nextgen-teehr:x86)
+--container-image PATH    Override the main container: a .sif path (default
+                          Apptainer/NextGen_Container.sif) or a registry URI
+--teehr-image PATH        Override the teehr_evaluation container
+                          (default Apptainer/Teehr_Container.sif)
 -e / --execution-site-name, -o / --output, -s / --skip-sites-catalog
 ```
 
@@ -151,8 +154,8 @@ pip install pytest pyyaml && python -m pytest tests/ -v
 # Gate 3: run every step by hand on a 3-month slice, inside the container
 # (superseded in practice by the successful full cluster run on 2026-07-30,
 # but still the cheapest way to shake out a change to a single wrapper)
-docker run --rm -it -v "$PWD":/work -w /work \
-    kthare10/nextgen-workflow:latest bash run_manual.sh
+apptainer exec --bind "$PWD":/work --pwd /work \
+    Apptainer/NextGen_Container.sif bash run_manual.sh
 ```
 
 The strongest correctness check (gate 4) is **notebook parity**: proving the

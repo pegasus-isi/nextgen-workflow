@@ -92,15 +92,40 @@ class NextGenWorkflow:
         self.wf_dir = str(Path(__file__).parent.resolve())
         self.shared_scratch_dir = os.path.join(self.wf_dir, "scratch")
         self.local_storage_dir = os.path.join(self.wf_dir, "output")
-        self.container_image = container_image or "docker://kthare10/nextgen-workflow:latest"
+        self.container_image = container_image or "Apptainer/NextGen_Container.sif"
         # TEEHR cannot coexist with the NGIAB engine environment (its pins
         # would downgrade pyarrow/pydantic/zarr under ngen), so the
         # teehr_evaluation job runs in a derivative of CIROH's companion
         # evaluation image instead — the same split NGIAB itself uses
-        # (runTeehr.sh). Our derivative (Docker/Teehr_Dockerfile) only adds
-        # curl/wget, which PegasusLite needs to fetch its worker package
+        # (runTeehr.sh). Our derivative (Apptainer/Teehr_Container.def) only
+        # adds curl/wget, which PegasusLite needs to fetch its worker package
         # inside the container.
-        self.teehr_image = teehr_image or "docker://kthare10/nextgen-teehr:x86"
+        self.teehr_image = teehr_image or "Apptainer/Teehr_Container.sif"
+
+    def _image(self, image, def_name):
+        """Resolve a container reference to an (image_url, image_site) pair.
+
+        A path ending in .sif (the default) is a locally built Apptainer image;
+        Pegasus stages it like any other input, so image_site is "local" — the
+        site where the file physically lives. Relative paths resolve against the
+        workflow directory. A full URL is passed through unchanged, and a bare
+        name means Docker Hub, so a registry image still works.
+
+        The .sif suffix is the discriminator on purpose: a bare registry
+        reference like "kthare10/nextgen-workflow:latest" also contains a slash,
+        so testing for a path separator would misread it as a local file.
+        """
+        if "://" in image:
+            return image, {"http": "web", "https": "web", "file": "local"}.get(
+                image.split("://", 1)[0], "docker_hub")
+        if not image.endswith(".sif"):
+            return "docker://" + image, "docker_hub"
+        path = image if os.path.isabs(image) else os.path.join(self.wf_dir, image)
+        if not os.path.exists(path):
+            logger.warning(
+                "Apptainer image not found at %s — build it first with: "
+                "apptainer build %s Apptainer/%s", path, path, def_name)
+        return "file://" + path, "local"
 
     def write(self):
         if self.sc is not None:
@@ -153,17 +178,22 @@ class NextGenWorkflow:
     def create_transformation_catalog(self, exec_site_name="condorpool"):
         self.tc = TransformationCatalog()
 
+        ngen_url, ngen_site = self._image(
+            self.container_image, "NextGen_Container.def")
+        teehr_url, teehr_site = self._image(
+            self.teehr_image, "Teehr_Container.def")
+
         container = Container(
             "nextgen_container",
             container_type=Container.SINGULARITY,
-            image=self.container_image,
-            image_site="docker_hub",
+            image=ngen_url,
+            image_site=ngen_site,
         )
         teehr_container = Container(
             "teehr_container",
             container_type=Container.SINGULARITY,
-            image=self.teehr_image,
-            image_site="docker_hub",
+            image=teehr_url,
+            image_site=teehr_site,
         )
 
         transformations = []
@@ -594,11 +624,13 @@ Examples:
                         help="Path to an existing hydrofabric cache tarball; "
                              "skips the shared fetch_hydrofabric job")
     parser.add_argument("--container-image", type=str, default=None,
-                        help="Container image URI (default: "
-                             "docker://kthare10/nextgen-workflow:latest)")
+                        help="Apptainer .sif path (relative to the workflow "
+                             "directory) or a full container URI (default: "
+                             "Apptainer/NextGen_Container.sif)")
     parser.add_argument("--teehr-image", type=str, default=None,
-                        help="Container image URI for the teehr_evaluation "
-                             "job (default: docker://awiciroh/ngiab-teehr:x86)")
+                        help="Apptainer .sif path or full container URI for "
+                             "the teehr_evaluation job (default: "
+                             "Apptainer/Teehr_Container.sif)")
 
     args = parser.parse_args()
 

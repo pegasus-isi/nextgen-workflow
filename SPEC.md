@@ -130,10 +130,14 @@ sources here are REQUIRED (fail-loud: write declared empty output, then exit non
 
 ## 5. Container and staging plan
 
-- **Base image**: `awiciroh/ciroh-ngen-image` (existing NGIAB Docker image) extended with
-  `teehr` (+ Java for Spark), `spotpy`, `dataretrieval`, `geopandas`, plotting deps →
-  publish as `kthare10/nextgen-workflow`. NextGen + `ngiab_data_cli` live in `/ngen/.venv`
-  inside the image; wrapper scripts invoke that venv explicitly.
+- **Base image**: `awiciroh/ciroh-ngen-image` (existing NGIAB OCI image, pulled and
+  converted by `Bootstrap: docker`) extended with `spotpy`, `dataretrieval`, `s3fs`,
+  `rioxarray` and `pyngiab` → built to `Apptainer/NextGen_Container.sif`, which Pegasus
+  stages (`image_site="local"`); no registry publication. NextGen + `ngiab_data_cli` live
+  in `/ngen/.venv` inside the image; wrapper scripts invoke that venv explicitly. TEEHR is
+  deliberately *not* installed here (see §11) — it gets its own
+  `Apptainer/Teehr_Container.sif`. Because a `.sif` carries one architecture only, build on
+  a host matching the worker nodes.
 - **CONUS hydrofabric**: several-GB download that must NOT happen per job. Options:
   (a) pre-bake into the container image, (b) stage once as a Pegasus input replica and
   share, or (c) one `fetch_hydrofabric` job whose output feeds all `subset_hydrofabric`
@@ -195,7 +199,9 @@ nextgen-workflow/
 │   ├── calibrate.py
 │   ├── apply_params.py
 │   └── summarize.py
-├── Docker/Dockerfile          # FROM awiciroh/ciroh-ngen-image
+├── Apptainer/NextGen_Container.def   # Bootstrap: docker / From: awiciroh/ciroh-ngen-image
+├── Apptainer/Teehr_Container.def     # Bootstrap: docker / From: awiciroh/ngiab-teehr:x86
+├── Docker/                    # legacy Dockerfiles, retained as a fallback
 ├── requirements.txt
 ├── README.md
 └── example_usage.sh
@@ -231,8 +237,9 @@ Hard requirements the implementation must satisfy.
   RAM for its local Spark session; don't apply one blanket memory request to every job.
 - **Calibration off by default** (`--calibrate N` opt-in): each DDS iteration is a full
   ~5–7 min model run.
-- **Repo conventions**: `workflow_generator.py` + `bin/` + `Docker/` + `README.md` +
-  `example_usage.sh`; image published under the `kthare10` registry.
+- **Repo conventions**: `workflow_generator.py` + `bin/` + `Apptainer/` + `README.md` +
+  `example_usage.sh`; images built locally to `.sif` and staged by Pegasus rather than
+  published to a registry (`Docker/` retained as a fallback).
 
 ## 10. Non-constraints (explicit non-goals)
 
@@ -313,7 +320,8 @@ The spec text above is unchanged; where they disagree, this section is current.
    downgrades that would corrupt `/ngen/.venv`, and a `pip install ... || true`
    guard cannot catch that failure mode because the install *succeeds* while
    doing the damage. Instead, the `teehr_evaluation` transformation runs in
-   `kthare10/nextgen-teehr:x86` — a thin derivative (`Docker/Teehr_Dockerfile`)
+   `Apptainer/Teehr_Container.sif` — a thin derivative
+   (`Apptainer/Teehr_Container.def`)
    of CIROH's companion image `awiciroh/ngiab-teehr:x86` (the split NGIAB
    itself uses) that adds curl/wget for PegasusLite's in-container worker
    package download; the wrapper drives its bundled `teehr_ngen.py` and maps the result
@@ -335,16 +343,21 @@ The spec text above is unchanged; where they disagree, this section is current.
    ciroh_pyngiab): `_check_dependencies` can only return True through its
    venv-retry branch, so an environment whose first probe already has correct
    pydantic/numpy is rejected. The paper's JupyterHub masked this (wrong system
-   python, correct venv). The Dockerfile rewrites the fall-through
+   python, correct venv). The definition file's `%post` rewrites the fall-through
    `return False` to `return valid_env`, asserts the patch target still exists,
-   and constructs `PyNGIAB` at build time as a smoke test.
+   and constructs `PyNGIAB` at build time as a smoke test. Both steps use quoted
+   heredocs rather than backslash-continued `python -c` so the embedded `\n` in
+   the patch target survives shell quoting unchanged.
 4. **Base image practicalities** (§5): `awiciroh/ciroh-ngen-image:v1.9.0` is
    Rocky Linux — `dnf` (with `--allowerasing` for the `curl-minimal` conflict),
    not `apt` — and its venv ships without pip; all installs go through the
    image's bundled `uv`. Only packages absent from the venv are added
    (dataretrieval, spotpy, s3fs matched to the venv's fsspec, rioxarray):
-   re-pinning present ones (per the original Dockerfile draft) would downgrade
-   the stack the engine binaries were built against.
+   re-pinning present ones (per the original container draft) would downgrade
+   the stack the engine binaries were built against. Note that Docker's `ENV`
+   applies at build *and* run time whereas Apptainer's `%environment` is run-time
+   only, so `PATH` is exported inside `%post` as well — otherwise the build-time
+   pyngiab smoke test probes the wrong interpreter.
 5. **Memory requests are 14 GB, not 16** (§3 profiles): nominal 16 GB slots
    advertise 15991 MB, so a 16384 MB request matches nothing and idles forever.
 6. **Fail-loud outputs** (§9): `run_nextgen` and `apply_params` write their

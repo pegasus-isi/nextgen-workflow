@@ -1,0 +1,53 @@
+# TEEHR evaluation container for the teehr_evaluation transformation.
+#
+# CIROH's companion evaluation image bundles TEEHR + Spark + Java +
+# /app/teehr_ngen.py, but it is Debian-slim with no curl/wget — and PegasusLite
+# must download its worker package inside the container before the job script
+# runs. This layer only adds those (plus procps: Spark's load-spark-env.sh calls
+# `ps`), and matplotlib.
+#
+# Converted from Docker/Teehr_Dockerfile. `Bootstrap: docker` pulls and converts
+# the OCI base image directly, so no Docker installation is needed to build the
+# .sif.
+#
+# Build:
+#   cd nextgen-workflow
+#   apptainer build Apptainer/Teehr_Container.sif Apptainer/Teehr_Container.def
+#
+# The :x86 base tag is what upstream's runTeehr.sh selects on x86 hosts — it is
+# architecture-specific, and a .sif has no multi-arch manifest, so this
+# definition produces an x86_64-only image.
+
+Bootstrap: docker
+From: awiciroh/ngiab-teehr:x86
+
+%post
+    # Fail the build on the first error, matching Docker's one-RUN-fails
+    # semantics.
+    set -eu
+
+    # %post always runs as root, so the Dockerfile's `USER root` is unnecessary.
+
+    # curl + wget are mandatory: PegasusLite downloads its worker package inside
+    # the container before the job script runs. procps supplies the `ps` that
+    # Spark's load-spark-env.sh calls.
+    apt-get update && \
+        apt-get install -y --no-install-recommends \
+            curl wget procps
+    rm -rf /var/lib/apt/lists/*
+
+    # The workflow's vendored analysis modules (forcings_utils via
+    # ngen_outputs_utils) import matplotlib at module level, and the wrapper's
+    # pandas fallback needs them when a gage is not in TEEHR's NWM crosswalk.
+    # All of matplotlib's dependencies are already pinned in the base image.
+    pip install --no-cache-dir "matplotlib==3.10.9"
+
+%environment
+    export PYTHONUNBUFFERED=1
+
+%runscript
+    exec /bin/bash "$@"
+
+%labels
+    maintainer Komal Thareja <kthare10@renci.org>
+    description TEEHR evaluation container for the NextGen workflow
