@@ -72,7 +72,7 @@ def main():
     print(f"Analyzing {args.gage} (routing feature {feature_id})")
 
     import pandas as pd
-    from ngen_outputs_utils import ngen_output_analysis, get_flow_data_from_netcdf
+    from ngen_outputs_utils import ngen_output_analysis
 
     agg = ngen_output_analysis(args.gage, feature_id)
     if agg is None:
@@ -95,21 +95,51 @@ def main():
     from pathlib import Path
 
     troute_files = sorted(Path(gage_path, "outputs", "troute").glob("*.nc"))
-    obs = pd.read_csv(args.obs)
-    if troute_files and not obs.empty and "discharge_cfs" in obs.columns:
-        sim_m3h = get_flow_data_from_netcdf(str(troute_files[0]), feature_id)
-        sim = pd.Series([v / 3600.0 * 35.3147 for v in sim_m3h])  # -> cfs
-        # Hourly simulation vs daily observations: aggregate to daily means and
-        # compare over the overlapping length.
-        sim_daily = sim.groupby(sim.index // 24).mean().reset_index(drop=True)
-        obs_daily = obs["discharge_cfs"].reset_index(drop=True)
-        n = min(len(sim_daily), len(obs_daily))
-        if n > 1:
-            metrics["n_days_compared"] = n
-            metrics["rmse_cfs"] = rmse(sim_daily[:n], obs_daily[:n])
-            metrics["kge"] = kge(sim_daily[:n], obs_daily[:n])
-            metrics["mean_sim_cfs"] = float(sim_daily[:n].mean())
-            metrics["mean_obs_cfs"] = float(obs_daily[:n].mean())
+    obs = np_util.obs_series_cfs(args.obs)
+    if troute_files and obs is not None:
+        sim = np_util.flow_series_cfs(troute_files[0], feature_id)
+        if isinstance(sim.index, pd.DatetimeIndex):
+            # Timestamp-aligned scoring. Hourly is the paper's Fig. 10
+            # resolution (AUTHOR_REVIEW.md #2) and fills `kge`; the daily
+            # aggregate is kept alongside for continuity with earlier runs.
+            # When the obs fetch degraded to daily values, an "hourly" join
+            # would only sample one midnight value per day, so skip it.
+            if np_util.obs_resolution(obs) == "hourly":
+                joined = pd.DataFrame({"sim": sim}).join(
+                    obs.rename("obs"), how="inner").dropna()
+                if len(joined) > 1:
+                    metrics["kge_resolution"] = "hourly"
+                    metrics["n_hours_compared"] = len(joined)
+                    metrics["rmse_cfs"] = rmse(joined["sim"], joined["obs"])
+                    metrics["kge"] = kge(joined["sim"], joined["obs"])
+                    metrics["mean_sim_cfs"] = float(joined["sim"].mean())
+                    metrics["mean_obs_cfs"] = float(joined["obs"].mean())
+            daily = pd.DataFrame({
+                "sim": sim.resample("D").mean(),
+                "obs": obs.resample("D").mean(),
+            }).dropna()
+            if len(daily) > 1:
+                metrics["n_days_compared"] = len(daily)
+                metrics["kge_daily"] = kge(daily["sim"], daily["obs"])
+                metrics["rmse_daily_cfs"] = rmse(daily["sim"], daily["obs"])
+                if "kge" not in metrics:
+                    metrics["kge_resolution"] = "daily"
+                    metrics["kge"] = metrics["kge_daily"]
+                    metrics["rmse_cfs"] = metrics["rmse_daily_cfs"]
+                    metrics["mean_sim_cfs"] = float(daily["sim"].mean())
+                    metrics["mean_obs_cfs"] = float(daily["obs"].mean())
+        else:
+            # No usable time coordinate: the old positional daily comparison.
+            sim_daily = sim.groupby(sim.index // 24).mean().reset_index(drop=True)
+            obs_daily = obs.resample("D").mean().dropna().reset_index(drop=True)
+            n = min(len(sim_daily), len(obs_daily))
+            if n > 1:
+                metrics["kge_resolution"] = "daily"
+                metrics["n_days_compared"] = n
+                metrics["rmse_cfs"] = rmse(sim_daily[:n], obs_daily[:n])
+                metrics["kge"] = kge(sim_daily[:n], obs_daily[:n])
+                metrics["mean_sim_cfs"] = float(sim_daily[:n].mean())
+                metrics["mean_obs_cfs"] = float(obs_daily[:n].mean())
     else:
         print("Skipping streamflow metrics (no t-route output or no observations)",
               file=sys.stderr)

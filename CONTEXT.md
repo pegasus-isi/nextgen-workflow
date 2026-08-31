@@ -34,6 +34,36 @@ Provenance: paper is Nassar et al. 2026, *Environmental Modelling & Software* 20
 107031, https://doi.org/10.1016/j.envsoft.2026.107031. Notebooks:
 https://doi.org/10.4211/hs.27045581bdea4808a393330f2417379c.
 
+**MILESTONE 2026-08-12: AUTHOR REVIEW (Ayman Nassar) — reproduction confirmed,
+two code fixes requested.** Review meeting with the paper's author (recorded in
+`AUTHOR_REVIEW.md`, checked in; raw Zoom summary in `MeetingAssets.pdf`,
+untracked). Verdict: the small calibration deviations
+(he cited 0.735 vs 0.727) are *expected* — DDS is stochastic, and our parallel
+seeded trials differ from the paper's single sequential trajectory — so the
+"reproduced within noise" claim stands. His requested changes:
+
+1. **Re-parent calibration onto the model run.** Today `calibrate` (and
+   `apply_params`) consume `rundir_tar` from `assemble_rundir`, making them
+   siblings of `run_nextgen`. The paper's sequence is prep → baseline run →
+   calibrate → calibrated run; feed them `rundir_{gage}_run.tar` instead.
+2. **Evaluate hourly, not daily.** The model already runs hourly and the
+   calibration objective is already hourly, but the evaluation path is daily:
+   `fetch_usgs_obs.py` pulls NWIS daily values and `outputs_analysis.py` /
+   `teehr_evaluation.py` aggregate sim to daily means. Paper Fig. 10 metrics
+   are hourly — fetch hourly/instantaneous obs and score hourly (or both).
+3. **Workflow diagram** should be restructured to show data prep → model
+   setup/run → calibration in sequence (follows from fix 1); Ayman offered to
+   help with the flowchart.
+
+Other action items: share deck + code with Ayman via a Google folder
+(Komal/Ewa); Ewa schedules follow-up with David + Ayman. Ayman confirmed the
+4-year window is 2 yr initialization + 2 yr calibration (matches
+`--training-start`). Feeds the AGU talk and a planned paper on AI methods for
+hydrological workflows. NOTE: the meeting's 0.735/0.727 numbers differ from
+run0007's 0.898-vs-0.893 — 0.735 is the paper's *NWM v3.0* KGE (Fig. 10), so
+he was likely reading the NWM row on a slide; double-check which numbers the
+deck shows before re-sharing.
+
 **MILESTONE 2026-08-03: PAPER FULLY REPRODUCED (run0007).** Fixed multi-start
 calibration (5×200 DDS trials) reached hourly KGE 0.898 vs the paper's 0.893;
 calibrated daily eval KGE 0.901/NSE 0.804 (up from baseline 0.860/0.799).
@@ -65,6 +95,12 @@ notebook parity.
 Everything through the paper-matching run is DONE (build, gate 3, plan/submit,
 run0005 clean 38/38, run0006 comparison — `PAPER_COMPARISON.md`). What remains:
 
+0. **Author-review fixes (2026-08-12, see milestone above)** — code DONE
+   2026-08-31 (calibrate/apply_params re-parented onto `run_nextgen`'s output
+   tar; obs fetched hourly with daily fallback; both evaluation jobs score
+   hourly on timestamp joins with daily aggregates alongside; README diagram
+   updated; status table in `AUTHOR_REVIEW.md`). Remaining: slide-deck
+   figures, and a re-validation run once a cluster exists again.
 1. **Calibration-objective diagnostic** (the open investigation; plan in
    `PAPER_COMPARISON.md`): (a) one default-parameter 4-year run, hourly KGE
    computed length-aligned vs timestamp-aligned; (b) one run with extreme CFE

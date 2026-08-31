@@ -66,7 +66,8 @@ def main():
     )
     parser.add_argument("--gage", required=True, help="Gage ID")
     parser.add_argument("--rundir-tar", required=True,
-                        help="Assembled run-directory tarball (pre-run tree)")
+                        help="Run-directory tarball from the baseline "
+                             "run_nextgen job")
     parser.add_argument("--obs", required=True, help="USGS observations CSV")
     parser.add_argument("--start", required=True, help="Simulation start YYYY-MM-DD")
     parser.add_argument("--end", required=True, help="Simulation end YYYY-MM-DD")

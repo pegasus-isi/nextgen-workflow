@@ -35,6 +35,15 @@ reached hourly KGE **0.898 vs the paper's 0.893**, improving the model from
 its (already strong, pre-calibrated) modern defaults of 0.860 to 0.901 daily
 KGE on the evaluation period.
 
+**Author review (2026-08-12): reproduction confirmed.** The paper's author
+reviewed these results and validated the reproduction — calibration deviations
+are within the DDS algorithm's expected stochastic spread. He requested two
+corrections, tracked in [`AUTHOR_REVIEW.md`](AUTHOR_REVIEW.md) and both now
+implemented: calibration descends from the baseline model run in the DAG
+(it previously branched off data assembly), and evaluation is scored hourly
+like the paper's Fig. 10 (with the daily aggregate reported alongside for
+continuity). A re-validation run on a fresh cluster is still pending.
+
 ## Why a workflow
 
 The notebooks are a linear chain for one basin at a time. The scientific premise
@@ -60,17 +69,16 @@ run. **No credentials are required anywhere**; every data source is public.
             assemble_rundir  ──►  rundir_{gage}.tar
                    │
                    ▼
-              run_nextgen  ◄── fetch_usgs_obs
-                   │
-        ┌──────────┴──────────┐
-        ▼                     ▼
- outputs_analysis      teehr_evaluation
-        └──────────┬──────────┘
-                   ▼            (default on, 6 reps; --calibrate 0 disables)
-              calibrate ──► apply_params ──► second analysis/teehr pair
-                   │
-                   ▼
-              summarize  (fan-in across all gages)
+              run_nextgen  ◄── fetch_usgs_obs (hourly NWIS)
+                   │  rundir_{gage}_run.tar
+        ┌──────────┼──────────────────┐
+        ▼          ▼                  ▼   (default on, 6 reps;
+ outputs_analysis  teehr_evaluation  calibrate   --calibrate 0 disables)
+        │          │                  │
+        │          │        apply_params ──► second analysis/teehr pair
+        └──────────┴─────┬────────────┘
+                         ▼
+                    summarize  (fan-in across all gages)
 ```
 
 | Step | Wraps | Notes |
@@ -80,11 +88,11 @@ run. **No credentials are required anywhere**; every data source is public.
 | `generate_forcings` | `ngiab_data_cli -f` | AORC subset/regrid for the period |
 | `generate_realization` | `ngiab_data_cli -r` + patch | Adds the 27 model `output_variables` |
 | `assemble_rundir` | `tar` | Merges the prep outputs into the NGIAB layout |
-| `fetch_usgs_obs` | `dataretrieval` NWIS | Public API, no key |
+| `fetch_usgs_obs` | `dataretrieval` NWIS | Hourly (instantaneous values resampled; degrades to daily values with a warning). Public API, no key |
 | `run_nextgen` | `PyNGIAB().run()` | NextGen + t-route; multiprocesses across catchments, auto-retries serially for small basins |
-| `outputs_analysis` | `ngen_output_analysis()` | Basin means, RMSE/KGE, water balance |
+| `outputs_analysis` | `ngen_output_analysis()` | Basin means, hourly RMSE/KGE (the paper's resolution; daily aggregate reported alongside), water balance |
 | `teehr_evaluation` | CIROH `ngiab-teehr` container | Real TEEHR: NextGen **and NWM v3.0** scored vs USGS (KGE/NSE/bias/RMSDR). Runs in its own container; pandas fallback when the gage lacks an NWM crosswalk entry |
-| `calibrate` | `run_spotpy()` DDS | **On by default** (6 repetitions, the paper demo's value; `--calibrate 0` disables) — each iteration is a full model run. `--dds-trials N` fans out N seeded trials in parallel |
+| `calibrate` | `run_spotpy()` DDS | **On by default** (6 repetitions, the paper demo's value; `--calibrate 0` disables) — each iteration is a full model run. Descends from the baseline `run_nextgen` (the paper's sequence, per author review). `--dds-trials N` fans out N seeded trials in parallel |
 | `select_best_params` | best-of reducer | Only with `--dds-trials` > 1: picks the winning trial, merges iteration logs |
 | `apply_params` | param patch + re-run | Second half of the unrolled calibration cycle |
 | `summarize` | fan-in merge | Combined metrics table and comparison figure |

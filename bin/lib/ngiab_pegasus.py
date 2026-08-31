@@ -206,6 +206,67 @@ def routing_feature_id(gage_path):
     return int(str(wb_id).split("-")[-1])
 
 
+def flow_series_cfs(nc_path, feature_id):
+    """Simulated flow from a t-route NetCDF as an hourly cfs pandas Series.
+
+    Values come from the paper's get_flow_data_from_netcdf (m^3/h). The index
+    is the file's own time coordinate when it is present and matches the
+    series length, so callers can align on timestamps instead of positions
+    (the paper evaluates hourly — AUTHOR_REVIEW.md #2). When the time
+    coordinate cannot be read, the index stays positional and callers must
+    fall back to positional alignment.
+    """
+    import pandas as pd
+
+    sys.path.insert(0, os.getcwd())
+    from ngen_outputs_utils import get_flow_data_from_netcdf
+
+    values = get_flow_data_from_netcdf(str(nc_path), feature_id)
+    sim = pd.Series([v / 3600.0 * 35.3147 for v in values])  # m^3/h -> cfs
+    try:
+        import xarray as xr
+
+        with xr.open_dataset(nc_path) as ds:
+            if "time" in ds and ds["time"].size == len(sim):
+                idx = pd.DatetimeIndex(pd.to_datetime(ds["time"].values))
+                if idx.tz is not None:
+                    idx = idx.tz_localize(None)
+                sim.index = idx
+    except Exception as exc:  # noqa: BLE001 - positional fallback stands
+        logger.warning("Could not read the time coordinate from %s (%s); "
+                       "flow series keeps a positional index", nc_path, exc)
+    return sim
+
+
+def obs_series_cfs(obs_csv):
+    """Observed discharge from a staged NWIS CSV as a UTC-naive cfs Series.
+
+    Returns None when the file is missing, empty, or lacks the expected
+    columns. Handles both tz-aware instantaneous timestamps and the naive
+    dates of the daily-values fallback.
+    """
+    import pandas as pd
+
+    if not obs_csv or not os.path.exists(obs_csv):
+        return None
+    frame = pd.read_csv(obs_csv)
+    if frame.empty or "discharge_cfs" not in frame.columns \
+            or "datetime" not in frame.columns:
+        return None
+    when = pd.to_datetime(frame["datetime"], utc=True).dt.tz_localize(None)
+    return pd.Series(frame["discharge_cfs"].values, index=when).sort_index()
+
+
+def obs_resolution(obs):
+    """'hourly' or 'daily', from the median spacing of an observation series."""
+    import pandas as pd
+
+    if obs is None or len(obs) < 3 or not isinstance(obs.index, pd.DatetimeIndex):
+        return "daily"
+    step = obs.index.to_series().diff().median()
+    return "hourly" if step <= pd.Timedelta(hours=6) else "daily"
+
+
 def configure_logging():
     logging.basicConfig(
         level=logging.INFO,
