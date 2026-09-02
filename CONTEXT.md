@@ -100,7 +100,22 @@ run0005 clean 38/38, run0006 comparison — `PAPER_COMPARISON.md`). What remains
    tar; obs fetched hourly with daily fallback; both evaluation jobs score
    hourly on timestamp joins with daily aggregates alongside; README diagram
    updated; status table in `AUTHOR_REVIEW.md`). Remaining: slide-deck
-   figures, and a re-validation run once a cluster exists again.
+   figures, and the re-validation run.
+
+   **Re-validation is in flight on a new cluster** (`ssh pegasus` =
+   `pegasus-submit.pegasus.fabric`; run dirs under
+   `~/nextgen-workflow/ubuntu/pegasus/nextgen/`). run0003 reached 33/49 before
+   failing: both author fixes worked (calibrate consumed `run_nextgen`'s tar,
+   baseline hourly evaluations passed) and trials t1–t4 each completed all 200
+   DDS iterations, but `calibrate_..._t5` died twice — iterations 62 then 41 —
+   from an MPICH nemesis TCP assertion (`socksm.c:569`) inside `ngen-parallel`,
+   which leaves no t-route output and makes the loop raise `FileNotFoundError`.
+   Same `--seed 5` both attempts but different iterations, so the fault is
+   transient infrastructure, not a parameter set. Diagnosis: `calibrate`
+   requested 4 cores while ngen partitions across all 8 and launches one MPI
+   rank per partition — fixed in `TOOL_CONFIGS` (see below), and t5 was
+   resubmitted from `nextgen-0.dag.rescue001` with `request_cpus` patched to 8
+   in its `.sub`.
 1. **Calibration-objective diagnostic** (the open investigation; plan in
    `PAPER_COMPARISON.md`): (a) one default-parameter 4-year run, hourly KGE
    computed length-aligned vs timestamp-aligned; (b) one run with extreme CFE
@@ -189,6 +204,16 @@ Ordered by how likely they are to bite. Also in `README.md`.
 - **Plot failures degrade to a placeholder image** instead of failing the job, so a
   cosmetic problem never kills a completed model run.
 - **Calibration off by default** — each DDS iteration is a full ~5–7 min model run.
+- **The calibration path stays faithful to the paper — do not harden it.**
+  User decision 2026-09-01, after an `ngen-parallel` MPICH abort inside one DDS
+  iteration left no t-route output and killed a 23-hour calibrate job near
+  iteration 190. Adding an in-loop guard (score the failed iteration badly and
+  keep sampling) was considered and **rejected**: this is a reproduction, so
+  anything that changes how the sampler scores or skips iterations changes the
+  science relative to the publication. Let such jobs fail honestly and be
+  retried; keep `cal_utils` deviations limited to the existing `PEGASUS PATCH`
+  markers. Infrastructure resilience belongs in the DAG and the environment,
+  not in the sampler.
 
 ## Testing notes
 

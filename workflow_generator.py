@@ -50,12 +50,22 @@ TOOL_CONFIGS = {
     "fetch_usgs_obs": {"memory": "2 GB", "cores": 1},
     # 14 GB, not 16: the pool's "16 GB" workers advertise 15991 MB after the OS
     # takes its share, so a 16384 MB request matches zero slots and idles forever.
-    "run_nextgen": {"memory": "14 GB", "cores": 4},
+    #
+    # 8 cores, not 4, for the three PyNGIAB jobs: parallel mode partitions the
+    # basin across ALL cores of the node and launches one MPI rank per
+    # partition, ignoring what the job requested. A 4-core request on an
+    # 8-core node therefore runs 8 ranks inside a 4-CPU cgroup, and the
+    # resulting CPU starvation is a good way to trip MPICH's nemesis TCP
+    # module (`socksm.c:569` assertion) — which is what killed calibrate
+    # trial 5 twice in run0003. Match the request to what ngen actually
+    # spawns. On a 15.6 GB node the 14 GB request already limits these to one
+    # per node, so widening cores costs no throughput.
+    "run_nextgen": {"memory": "14 GB", "cores": 8},
     "outputs_analysis": {"memory": "8 GB", "cores": 1},
     "teehr_evaluation": {"memory": "12 GB", "cores": 2},
-    "calibrate": {"memory": "14 GB", "cores": 4},
+    "calibrate": {"memory": "14 GB", "cores": 8},
     "select_best_params": {"memory": "2 GB", "cores": 1},
-    "apply_params": {"memory": "14 GB", "cores": 4},
+    "apply_params": {"memory": "14 GB", "cores": 8},
     "summarize": {"memory": "2 GB", "cores": 1},
 }
 
