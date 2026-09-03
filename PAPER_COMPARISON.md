@@ -1,6 +1,14 @@
 # Results comparison: this workflow vs. Nassar et al. (2026)
 
-**Status: COMPLETE (2026-08-03).** Every published quantity is reproduced.
+**Status: COMPLETE (2026-08-03), re-validated on the corrected hourly path
+(run0003, 2026-09-03).** The definitive comparison is now the
+[run0003 section](#re-validation-on-the-corrected-hourly-path-run0003)
+below — it is the first run where *every* number on both sides is hourly, so
+it supersedes the daily-vs-hourly caveats that qualified run0006 and run0007.
+Everything above that section is retained as the record of how the
+reproduction got there.
+
+Every published quantity is reproduced.
 run0006 matched the uncalibrated-model and NWM v3.0 metrics within 0.01–0.05
 KGE; its calibration leg exposed real defects in the vendored calibration
 code (documented below, since fixed), and the re-run with fixes and parallel
@@ -19,6 +27,74 @@ run0007 also demonstrated why multi-start matters: only 2 of 5 independent
 that lost shipped `baseline_retained` instead of degrading the model. A
 single sequential trajectory — the paper's method, and run0006's — is a coin
 flip against today's pre-calibrated NGIAB defaults.
+
+## Re-validation on the corrected hourly path (run0003)
+
+Completed **2026-09-03**, 49/49 nodes Success, on the new
+`pegasus-submit.pegasus.fabric` pool. This is the run that validates the two
+code changes the author requested (see [`AUTHOR_REVIEW.md`](AUTHOR_REVIEW.md)):
+calibration re-parented onto the baseline model run, and evaluation scored
+**hourly on timestamp-aligned joins** instead of daily means. Both sides of
+every row below are hourly.
+
+| Quantity (evaluation period, WY2020–21, hourly) | Paper (Fig. 10) | run0003 | Δ |
+|---|---|---|---|
+| **Calibrated NextGen KGE** | **0.893** | **0.8903** | **−0.003** |
+| Calibrated NextGen NSE | 0.785 | 0.7914 | +0.006 |
+| NWM v3.0 KGE | 0.735 | 0.7361 | +0.001 |
+| NWM v3.0 NSE | 0.752 | 0.7540 | +0.002 |
+| Spin-up NWM v3.0 KGE / NSE | 0.418 / 0.428 | 0.4185 / 0.4288 | +0.001 |
+| Spin-up uncalibrated NextGen KGE / NSE | 0.200 / −0.410 | 0.1652 / −0.474 | −0.035 / −0.064 |
+
+The uncalibrated defaults score **KGE 0.8598** on the evaluation period, so
+calibration gained **+0.031 KGE**. Every published quantity lands within 0.003
+except the uncalibrated spin-up NextGen row, which carries the same offset
+seen in run0006 (0.175 vs 0.200) — a pre-existing difference in the
+uncalibrated model, not something the author's fixes introduced.
+
+**The calibrated re-run reproduced the calibration's own objective to seven
+significant figures**: DDS reported `best_objective_value = 0.8903167830` for
+the winning trial, and the independent calibrated evaluation scored
+`0.8903167650`. That closes the loop run0006 left open — `apply_params` writes
+the selected parameters into `realization.json` correctly, and the re-run
+reproduces the score the sampler measured.
+
+Multi-start again proved necessary. Five seeded 200-iteration DDS trajectories:
+
+| Trial (seed) | Best iteration | Sampled KGE | Outcome |
+|---|---|---|---|
+| 1 | 156 | 0.8571 | `baseline_retained` (lost to 0.8598 defaults) |
+| **2** | **190** | **0.8903** | **selected by the reducer** |
+| 3 | 199 | 0.8739 | calibrated |
+| 4 | 199 | 0.4547 | `baseline_retained` |
+| 5 | 185 | 0.7776 | `baseline_retained` |
+
+Three of five trajectories failed to beat the modern pre-calibrated NGIAB
+defaults — the same pattern as run0007. A single sequential trajectory, which
+is the paper's method, had a 40% chance of finding anything better than the
+defaults on this basin.
+
+**Reading trap.** `output/summary/summary_metrics.csv`'s headline `kge` column
+is the **full 4-year period** (0.4365 default, 0.4216 calibrated), because it
+spans the spin-up years. Taken at face value it suggests calibration made the
+model worse. The paper-comparable numbers are the
+`period=evaluation, resolution=hourly` rows of
+`output/analysis/gage-10109001_teehr_metrics{,_cal}.csv`. Calibrated
+full-period scoring slightly below default is expected: DDS optimizes the
+evaluation window only, so spin-up drifts a little as a side effect.
+
+**In-sample, by design.** `bin/lib/cal_utils.py` windows the observed series to
+`>= training_start_date`, so the DDS objective covers 2019-10 → 2021-09 — the
+same window labeled `period=evaluation`. The 0.8903 and the published 0.893 are
+both in-sample calibration performance; the design has no held-out validation
+window. See [`AUTHOR_REVIEW.md`](AUTHOR_REVIEW.md) for the full note.
+
+Getting here took two attempts: the first pass reached 33/49 before one
+calibration trial died twice on an MPICH nemesis TCP assertion inside
+`ngen-parallel`. Root cause was a resource-request mismatch — `calibrate`
+asked for 4 cores while PyNGIAB partitions across all 8 node cores and
+launches one MPI rank per partition — fixed in `TOOL_CONFIGS` and resubmitted
+from the rescue DAG with no change to the calibration code.
 
 ## What is being compared
 
@@ -152,10 +228,15 @@ calibrated skill.
 
 ## Caveats on comparability
 
-- **Daily vs hourly**: workflow metrics are daily-mean vs NWIS daily values;
-  the paper's are hourly via TEEHR. For this baseflow-dominated karst basin
-  the bases track each other closely (the three matching quantities above
-  bear that out), but they are not identical statistics.
+- ~~**Daily vs hourly**~~ **RESOLVED in run0003 (2026-09-03).** The caveat
+  below applied to run0006/run0007, whose workflow metrics were daily-mean vs
+  NWIS daily values while the paper's were hourly via TEEHR. Author feedback #2
+  removed that mismatch: observations are now fetched hourly and both
+  evaluation jobs score on timestamp-aligned hourly joins, reporting the daily
+  aggregate alongside. The run0003 table above is hourly on both sides.
+  Original caveat, for the earlier runs: for this baseflow-dominated karst
+  basin the two bases track each other closely (the three matching quantities
+  above bear that out), but they are not identical statistics.
 - **Not bit-for-bit by design** (SPEC §10): the CONUS hydrofabric, AORC
   forcing archive, and NWM retrospective all drift; the preprocessor is
   pinned at 4.9.1 vs the paper's older version. "Close" is the achievable
@@ -166,7 +247,10 @@ calibrated skill.
   0.6+).
 - The paper's published notebooks disagree with the paper text on two
   parameters (training start 2020-10-01 vs 2019-10-01; repetitions 6 vs 200);
-  the paper text was treated as authoritative.
+  the paper text was treated as authoritative. **The author confirmed the
+  paper text on 2026-08-12** — of the 4-year period, the first two years
+  initialize the model and the last two calibrate it, i.e. the 2+2 split that
+  `--training-start 2019-10-01` produces.
 
 ## Artifacts
 
@@ -174,5 +258,13 @@ calibrated skill.
   `output/analysis/gage-10109001_teehr_metrics{,_cal}.csv`,
   `output/calibration/gage-10109001_calibration_iterations.csv` (200 rows),
   `output/gage-10109001_best_params.json`.
+- run0003 (the hourly re-validation) on `pegasus-submit.pegasus.fabric` at
+  `~/nextgen-workflow/output/`: the same four files, plus a merged
+  `calibration_iterations.csv` carrying all 1,000 iterations with a `trial`
+  column (200 per seed). `best_params.json` records the winner as
+  `seed=2, best_objective_value=0.8903167829912476,
+  baseline_objective_value=0.8597975042424568`. The per-trial CSVs and
+  payloads are intermediates and are removed by the cleanup job once the
+  reducer consumes them — the merged log is the durable per-trial record.
 - Paper: `references/nassar2026-envsoft-107031.pdf`, results in §3.2.3–3.2.4
   and Fig. 10.
