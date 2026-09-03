@@ -44,13 +44,20 @@ every row below are hourly.
 | NWM v3.0 KGE | 0.735 | 0.7361 | +0.001 |
 | NWM v3.0 NSE | 0.752 | 0.7540 | +0.002 |
 | Spin-up NWM v3.0 KGE / NSE | 0.418 / 0.428 | 0.4185 / 0.4288 | +0.001 |
-| Spin-up uncalibrated NextGen KGE / NSE | 0.200 / −0.410 | 0.1652 / −0.474 | −0.035 / −0.064 |
+| Spin-up uncalibrated NextGen KGE / NSE | 0.200 / −0.410 | 0.1752 / −0.4740 | −0.025 / −0.064 |
 
 The uncalibrated defaults score **KGE 0.8598** on the evaluation period, so
 calibration gained **+0.031 KGE**. Every published quantity lands within 0.003
-except the uncalibrated spin-up NextGen row, which carries the same offset
-seen in run0006 (0.175 vs 0.200) — a pre-existing difference in the
-uncalibrated model, not something the author's fixes introduced.
+except the uncalibrated spin-up NextGen row, which reproduces run0006's 0.1752
+to four decimals — the same pre-existing difference in the uncalibrated model,
+not something the author's fixes introduced.
+
+Note which run each row comes from: the uncalibrated and NWM rows are read from
+`gage-10109001_teehr_metrics.csv` (the default-parameter run) and the calibrated
+row from `..._teehr_metrics_cal.csv`. Reading a spin-up number off the
+*calibrated* file instead gives 0.1651 — that is the calibrated parameters
+applied to the warm-up window, a different quantity from the paper's
+uncalibrated spin-up, and not comparable to Fig. 10's 0.200.
 
 **The calibrated re-run reproduced the calibration's own objective to seven
 significant figures**: DDS reported `best_objective_value = 0.8903167830` for
