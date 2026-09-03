@@ -14,7 +14,7 @@ Pipeline steps (per gage):
 5. run_nextgen          - PyNGIAB().run() : NOAH-OWP + CFE + t-route routing
 6. outputs_analysis     - basin-mean aggregation, RMSE/KGE vs USGS observations
 7. teehr_evaluation     - TEEHR/Spark evaluation against NWM v3.0 retrospective
-8. calibrate            - (optional) SPOTPY DDS parameter calibration
+8. calibrate            - (optional) SPOTPY DDS calibration of the baseline run
 9. summarize            - fan-in across all gages
 
 The CONUS hydrofabric is fetched by a single shared job and reused by every gage.
@@ -50,12 +50,22 @@ TOOL_CONFIGS = {
     "fetch_usgs_obs": {"memory": "2 GB", "cores": 1},
     # 14 GB, not 16: the pool's "16 GB" workers advertise 15991 MB after the OS
     # takes its share, so a 16384 MB request matches zero slots and idles forever.
-    "run_nextgen": {"memory": "14 GB", "cores": 4},
+    #
+    # 8 cores, not 4, for the three PyNGIAB jobs: parallel mode partitions the
+    # basin across ALL cores of the node and launches one MPI rank per
+    # partition, ignoring what the job requested. A 4-core request on an
+    # 8-core node therefore runs 8 ranks inside a 4-CPU cgroup, and the
+    # resulting CPU starvation is a good way to trip MPICH's nemesis TCP
+    # module (`socksm.c:569` assertion) — which is what killed calibrate
+    # trial 5 twice in run0003. Match the request to what ngen actually
+    # spawns. On a 15.6 GB node the 14 GB request already limits these to one
+    # per node, so widening cores costs no throughput.
+    "run_nextgen": {"memory": "14 GB", "cores": 8},
     "outputs_analysis": {"memory": "8 GB", "cores": 1},
     "teehr_evaluation": {"memory": "12 GB", "cores": 2},
-    "calibrate": {"memory": "14 GB", "cores": 4},
+    "calibrate": {"memory": "14 GB", "cores": 8},
     "select_best_params": {"memory": "2 GB", "cores": 1},
-    "apply_params": {"memory": "14 GB", "cores": 4},
+    "apply_params": {"memory": "14 GB", "cores": 8},
     "summarize": {"memory": "2 GB", "cores": 1},
 }
 
@@ -411,6 +421,12 @@ class NextGenWorkflow:
         metrics_files.extend(analysis_metrics)
 
         # --- Optional calibration branch ------------------------------------
+        # Calibration descends from run_nextgen (it consumes run_tar, not the
+        # assembled rundir_tar): the paper's sequence is prep -> baseline run
+        # -> calibrate -> calibrated run, confirmed by the author in review
+        # (AUTHOR_REVIEW.md #1). The post-run tarball carries the same
+        # config/forcings tree plus baseline outputs, which calibration's
+        # per-iteration re-runs simply overwrite.
         if args.calibrate:
             best_params = File(f"{gage}_best_params.json")
             cal_iters = File(f"calibration/{gage}_calibration_iterations.csv")
@@ -422,7 +438,7 @@ class NextGenWorkflow:
                     Job("calibrate", _id=job_id, node_label=label)
                     .add_args(
                         "--gage", gage,
-                        "--rundir-tar", rundir_tar,
+                        "--rundir-tar", run_tar,
                         "--obs", obs_csv,
                         "--start", args.start,
                         "--end", args.end,
@@ -433,7 +449,7 @@ class NextGenWorkflow:
                         "--output-params", params_file,
                         "--output-iterations", iters_file,
                     )
-                    .add_inputs(rundir_tar, obs_csv, *lib_files)
+                    .add_inputs(run_tar, obs_csv, *lib_files)
                     .add_outputs(params_file, stage_out=stage,
                                  register_replica=False)
                     .add_outputs(iters_file, stage_out=stage,
@@ -492,11 +508,11 @@ class NextGenWorkflow:
                     node_label=f"apply_{gage}")
                 .add_args(
                     "--gage", gage,
-                    "--rundir-tar", rundir_tar,
+                    "--rundir-tar", run_tar,
                     "--params", best_params,
                     "--output", cal_run_tar,
                 )
-                .add_inputs(rundir_tar, best_params, *lib_files)
+                .add_inputs(run_tar, best_params, *lib_files)
                 .add_outputs(cal_run_tar, stage_out=False, register_replica=False)
                 .add_pegasus_profiles(label=gage)
             )

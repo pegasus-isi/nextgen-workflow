@@ -22,3 +22,18 @@ braindump.yml
 references/nassar2026-envsoft-107031.pdf
 .idea/
 run*-output/
+
+# Local-only: presentation binaries and meeting records. The built decks are
+# unpublished, and MeetingAssets.pdf is a Zoom summary of the author review
+# that carries a shareable recording link — neither belongs in a public
+# repository. AUTHOR_REVIEW.md is the checked-in record of that meeting.
+#
+# Note this excludes the *artifacts*, not slides/ as a whole: the builders,
+# speaker-note scripts and figures under slides/ are plain text and safe to
+# track. Ignoring the whole directory would have hidden them too.
+MeetingAssets.pdf
+*.pptx
+*.ppt
+*.key
+slides/*.pdf
+slides/.codex-pptx-*/

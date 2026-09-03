@@ -183,8 +183,8 @@ def _nwm_feature_id_candidates(gage, gage_path):
 NWM_RETRO_ZARR = "s3://noaa-nwm-retrospective-3-0-pds/CONUS/zarr/chrtout.zarr"
 
 
-def _nwm_retro_daily_cfs(nwm_feature_id, start, end):
-    """Daily-mean NWM v3.0 retrospective flow in cfs for one reach."""
+def _nwm_retro_cfs(nwm_feature_id, start, end):
+    """Hourly NWM v3.0 retrospective flow in cfs for one reach."""
     import xarray as xr
 
     ds = xr.open_zarr(
@@ -201,16 +201,21 @@ def _nwm_retro_daily_cfs(nwm_feature_id, start, end):
             f"NWM v3.0 retrospective has no data for reach {nwm_feature_id} "
             f"in {start}..{end}"
         )
-    # m^3/s -> cfs, hourly -> daily to match the NWIS daily values.
-    return flow.to_series().resample("D").mean() * 35.3147
+    # m^3/s -> cfs; the retrospective is natively hourly, which is the
+    # paper's evaluation resolution — scoring aggregates to daily as needed.
+    return flow.to_series() * 35.3147
 
 
 def fallback_evaluation(gage, gage_path, obs_csv, start, end, training_start):
-    """Score NextGen (and NWM v3.0) vs observed flow by period."""
-    import pandas as pd
+    """Score NextGen (and NWM v3.0) vs observed flow by period.
 
-    sys.path.insert(0, os.getcwd())
-    from ngen_outputs_utils import get_flow_data_from_netcdf
+    Hourly is the primary resolution — the paper's Fig. 10 metrics are hourly
+    (AUTHOR_REVIEW.md #2) — with a daily-mean aggregate emitted alongside for
+    continuity with earlier runs. When the obs fetch degraded to daily values,
+    an hourly join would only sample one midnight value per day, so only the
+    daily rows are produced.
+    """
+    import pandas as pd
 
     feature_id = np_util.routing_feature_id(gage_path)
     troute_files = sorted(Path(gage_path, "outputs", "troute").glob("*.nc"))
@@ -219,49 +224,51 @@ def fallback_evaluation(gage, gage_path, obs_csv, start, end, training_start):
             f"No t-route NetCDF under {gage_path}/outputs/troute"
         )
 
-    sim_m3h = get_flow_data_from_netcdf(str(troute_files[0]), feature_id)
-    sim_cfs = pd.Series([v / 3600.0 * 35.3147 for v in sim_m3h])
-    # Hourly -> daily to match the NWIS daily values.
-    sim_daily = sim_cfs.groupby(sim_cfs.index // 24).mean().reset_index(drop=True)
+    sim_cfs = np_util.flow_series_cfs(troute_files[0], feature_id)
+    if not isinstance(sim_cfs.index, pd.DatetimeIndex):
+        # t-route emits one value per model hour from the simulation start.
+        sim_cfs.index = pd.date_range(start=start, periods=len(sim_cfs),
+                                      freq="h")
 
-    dates = pd.date_range(start=start, periods=len(sim_daily), freq="D")
-    sim_daily.index = dates
-
-    obs = None
-    if obs_csv and os.path.exists(obs_csv):
-        frame = pd.read_csv(obs_csv, parse_dates=["datetime"])
-        if not frame.empty and "discharge_cfs" in frame.columns:
-            obs = frame.set_index("datetime")["discharge_cfs"]
-            obs.index = obs.index.tz_localize(None)
+    obs = np_util.obs_series_cfs(obs_csv)
+    resolutions = (
+        ("hourly", "daily") if np_util.obs_resolution(obs) == "hourly"
+        else ("daily",)
+    )
 
     cut = pd.Timestamp(training_start)
 
     def score(series, secondary):
-        joined = pd.DataFrame({"sim": series}).join(obs.rename("obs"), how="inner")
         out = []
-        periods = {
-            "spinup": joined[joined.index < cut],
-            "evaluation": joined[joined.index >= cut],
-            "full": joined,
-        }
-        for name, frame in periods.items():
-            if frame.empty:
-                continue
-            row = {
-                "gage": gage,
-                "feature_id": feature_id,
-                "period": name,
-                "primary": "usgs_observed",
-                "secondary": secondary,
-                "method": "pandas_fallback",
+        for resolution in resolutions:
+            s = series if resolution == "hourly" else series.resample("D").mean()
+            o = obs if resolution == "hourly" else obs.resample("D").mean()
+            joined = pd.DataFrame({"sim": s}).join(
+                o.rename("obs"), how="inner").dropna()
+            periods = {
+                "spinup": joined[joined.index < cut],
+                "evaluation": joined[joined.index >= cut],
+                "full": joined,
             }
-            row.update(metrics_from_series(frame["sim"], frame["obs"]))
-            out.append(row)
+            for name, frame in periods.items():
+                if frame.empty:
+                    continue
+                row = {
+                    "gage": gage,
+                    "feature_id": feature_id,
+                    "period": name,
+                    "resolution": resolution,
+                    "primary": "usgs_observed",
+                    "secondary": secondary,
+                    "method": "pandas_fallback",
+                }
+                row.update(metrics_from_series(frame["sim"], frame["obs"]))
+                out.append(row)
         return out
 
     rows = []
     if obs is not None:
-        rows.extend(score(sim_daily, "nextgen_simulated"))
+        rows.extend(score(sim_cfs, "nextgen_simulated"))
 
         # NWM v3.0 benchmark via direct fetch (SPEC section 7 risk 2). The
         # TEEHR warehouse crosswalk misses some gages — this workflow's demo
@@ -269,19 +276,19 @@ def fallback_evaluation(gage, gage_path, obs_csv, start, end, training_start):
         # retrospective ourselves. Best-effort: the USGS comparison above
         # stands even if this fails.
         try:
-            nwm_daily = None
+            nwm_cfs = None
             for source, fid in _nwm_feature_id_candidates(gage, gage_path):
                 try:
-                    nwm_daily = _nwm_retro_daily_cfs(fid, start, end)
+                    nwm_cfs = _nwm_retro_cfs(fid, start, end)
                     print(f"NWM v3.0 reach for {gage}: {fid} (from {source})")
                     break
                 except (KeyError, ValueError) as exc:
                     print(f"NWM reach candidate {fid} (from {source}) "
                           f"not usable: {exc}", file=sys.stderr)
-            if nwm_daily is None:
+            if nwm_cfs is None:
                 raise ValueError("no candidate reach id found in the "
                                  "NWM v3.0 retrospective")
-            rows.extend(score(nwm_daily, "nwm30_retrospective"))
+            rows.extend(score(nwm_cfs, "nwm30_retrospective"))
         except Exception as exc:  # noqa: BLE001
             import traceback
             traceback.print_exc()
@@ -311,6 +318,8 @@ def _pillow_metrics_table(gage, rows, plot_path):
     lines = [f"{gage}: streamflow skill (TEEHR container, no matplotlib)"]
     for r in rows:
         parts = [f"{r.get('secondary', '?')}/{r.get('period', '?')}"]
+        if r.get("resolution"):
+            parts[0] += f"/{r['resolution']}"
         for m in ("kge", "nse", "rel_bias", "rmsdr", "rmse"):
             if r.get(m) is not None:
                 parts.append(f"{m}={r[m]:.3f}")
@@ -330,7 +339,14 @@ def plot_metrics(gage, rows, plot_path):
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
 
-        usable = [r for r in rows if r.get("kge") is not None and "kge" in r]
+        scored = [r for r in rows if r.get("kge") is not None]
+        # The fallback emits hourly and daily rows for the same
+        # (secondary, period); plot one resolution to keep the bars distinct,
+        # preferring hourly (the paper's). TEEHR rows carry no resolution.
+        if any(r.get("resolution") == "hourly" for r in scored):
+            usable = [r for r in scored if r.get("resolution", "hourly") == "hourly"]
+        else:
+            usable = scored
         fig, ax = plt.subplots(figsize=(7, 4))
         if usable:
             labels = [
