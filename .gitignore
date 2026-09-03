@@ -22,3 +22,13 @@ braindump.yml
 references/nassar2026-envsoft-107031.pdf
 .idea/
 run*-output/
+
+# Local-only: presentation material and meeting records. The decks are
+# unpublished, and MeetingAssets.pdf is a Zoom summary of the author review
+# that carries a shareable recording link — neither belongs in a public
+# repository. AUTHOR_REVIEW.md is the checked-in record of that meeting.
+slides/
+MeetingAssets.pdf
+*.pptx
+*.ppt
+*.key
