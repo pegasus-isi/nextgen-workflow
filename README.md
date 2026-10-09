@@ -113,8 +113,9 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ./workflow_generator.py --gages gage-10109001 --start 2017-10-01 --end 2021-09-30
 
-# 3. Plan and submit
-pegasus-plan --submit -s condorpool -o local workflow.yml
+# 3. Plan and submit (the execution site is "compute": written to sites.yml
+#    as an HTCondor pool, or defined by a hosted catalog — see Sites below)
+pegasus-plan --submit -s compute -o local workflow.yml
 
 # 4. Monitor / debug
 pegasus-status <run-dir>
@@ -173,8 +174,49 @@ Treat ghcr.io as a distribution channel and keep staging the local `.sif`. Detai
                           Apptainer/NextGen_Container.sif) or a registry URI
 --teehr-image PATH        Override the teehr_evaluation container
                           (default Apptainer/Teehr_Container.sif)
--e / --execution-site-name, -o / --output, -s / --skip-sites-catalog
+-o / --output             Output workflow file (default workflow.yml)
 ```
+
+### Sites
+
+The workflow names no scheduler: each job states cores, memory and a
+wall-clock runtime (calibrate's budget grows with `--calibrate`), and every
+job plans against a site named `compute`. With `-s unity.yml` (or a hosted
+catalog set in `~/.pegasusrc`) a
+[hosted site catalog](https://github.com/pegasushub/pegasus-site-catalogs)
+defines it; with no options `custom_sites.py` writes it to `sites.yml` as an
+HTCondor pool.
+
+```sh
+./workflow_generator.py --gages gage-10109001                      # HTCondor pool
+./workflow_generator.py --gages gage-10109001 -s unity.yml --project my_lab
+./workflow_generator.py --gages gage-10109001 --site-style slurm \
+    --queue cpu --project my_lab                                   # Slurm, no hosted catalog
+pegasus-plan --submit -s compute -o local workflow.yml
+```
+
+```
+-e / --execution-site     Site to plan against (default compute, the name
+                          hosted catalogs give their site)
+-s / --hosted-site-catalog FILE
+                          Hosted site catalog, e.g. unity.yml; written to
+                          pegasus.properties (default: ~/.pegasusrc's, if any)
+--site-style auto|condor|slurm|none
+                          auto keeps an existing sites.yml entry or hosted
+                          catalog, else writes compute as an HTCondor pool
+--queue, --project        Batch partition and allocation account
+--site-scratch DIR        Slurm shared scratch (default ./work)
+--site-profile NS:KEY=VALUE, --tag-profile TAG:NS:KEY=VALUE
+                          Extra profiles on the site or on tagged jobs
+--shared-filesystem auto|yes|no
+                          Read inputs in place (auto: on for Slurm)
+--sites-yml FILE          Local site catalog (default sites.yml)
+```
+
+On a batch site the workflow directory is bound into both containers and
+inputs are read in place. The Pegasus worker package staged into the
+containers is `x86_64_rhel_9`, which runs in both the Rocky 9 NextGen image
+and the Debian 12 TEEHR image.
 
 Multiple basins, reusing a cache you already have:
 

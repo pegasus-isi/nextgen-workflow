@@ -333,3 +333,32 @@ def test_every_transformation_has_a_wrapper(tmp_path):
         path = os.path.join(WF_DIR, "bin", f"{name}.py")
         assert os.path.exists(path), f"missing wrapper: bin/{name}.py"
         assert os.access(path, os.X_OK), f"wrapper not executable: bin/{name}.py"
+
+
+def test_default_site_is_compute(tmp_path):
+    """With no hosted catalog the generator writes 'compute' as a condor pool."""
+    generate(tmp_path)
+    sites = yaml.safe_load(open(tmp_path / "sites.yml"))
+    by_name = {s["name"]: s for s in sites["sites"]}
+    assert set(by_name) == {"local", "compute"}
+    assert by_name["compute"]["profiles"]["pegasus"]["style"] == "condor"
+
+
+def test_hosted_site_catalog_in_properties(tmp_path):
+    """-s FILE names the hosted catalog in pegasus.properties; nothing is
+    written for 'compute', which the hosted catalog defines."""
+    generate(tmp_path, "-s", "unity.yml")
+    props = open(tmp_path / "pegasus.properties").read()
+    assert "pegasus.catalog.site.repo.file = unity.yml" in props
+    sites = yaml.safe_load(open(tmp_path / "sites.yml"))
+    assert [s["name"] for s in sites["sites"]] == ["local"]
+
+
+def test_every_transformation_has_a_runtime(tmp_path):
+    """Batch sites refuse or kill jobs without a wall-clock runtime."""
+    generate(tmp_path, "--calibrate", "2", "--training-start", "2020-10-01")
+    tc = yaml.safe_load(open(tmp_path / "transformations.yml"))
+    for tx in tc["transformations"]:
+        if tx.get("namespace") == "pegasus":
+            continue
+        assert tx["profiles"]["pegasus"].get("runtime"), tx["name"]
