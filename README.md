@@ -116,7 +116,7 @@ pip install -r requirements.txt
 # 3. Plan and submit (the generator prints this; it never submits itself).
 #    "compute" comes from a hosted site catalog — see Sites below; on a plain
 #    HTCondor pool, generate with -e condorpool and plan with -s condorpool.
-pegasus-plan --dir submit -s compute -o local --submit workflow.yml
+pegasus-plan --dir submit -s compute -o local --output-dir "$PWD/output" --submit workflow.yml
 
 # 4. Monitor / debug
 pegasus-status <run-dir>
@@ -192,10 +192,10 @@ default to about 2 h.
 
 ```sh
 ./workflow_generator.py --gages gage-10109001 -s unity.yml        # hosted catalog
-pegasus-plan --dir submit -s compute -o local --submit workflow.yml
+pegasus-plan --dir submit -s compute -o local --output-dir "$PWD/output" --submit workflow.yml
 
 ./workflow_generator.py --gages gage-10109001 -e condorpool       # plain HTCondor pool
-pegasus-plan --dir submit -s condorpool -o local --submit workflow.yml
+pegasus-plan --dir submit -s condorpool -o local --output-dir "$PWD/output" --submit workflow.yml
 ```
 
 ```
@@ -250,9 +250,9 @@ pin first (newer than the paper's version).
 
 ## Outputs
 
-Staged to `wf-output/` in the directory you planned from when run from the CLI
-(Pegasus's default `local` site — the generator writes no site catalog), or to
-`output/` when run from `NextGen-Workflow.ipynb`:
+Staged to `output/` — by the CLI's plan command (it passes `--output-dir`,
+since the generator writes no site catalog and Pegasus's default `local` site
+would otherwise use `wf-output/`) and by `NextGen-Workflow.ipynb`:
 
 ```
 output/
