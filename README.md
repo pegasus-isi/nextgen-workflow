@@ -113,9 +113,10 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ./workflow_generator.py --gages gage-10109001 --start 2017-10-01 --end 2021-09-30
 
-# 3. Plan and submit (the execution site is "compute": written to sites.yml
-#    as an HTCondor pool, or defined by a hosted catalog — see Sites below)
-pegasus-plan --submit -s compute -o local workflow.yml
+# 3. Plan and submit (the generator prints this; it never submits itself).
+#    "compute" comes from a hosted site catalog — see Sites below; on a plain
+#    HTCondor pool, generate with -e condorpool and plan with -s condorpool.
+pegasus-plan --dir submit -s compute -o local --submit workflow.yml
 
 # 4. Monitor / debug
 pegasus-status <run-dir>
@@ -179,39 +180,36 @@ Treat ghcr.io as a distribution channel and keep staging the local `.sif`. Detai
 
 ### Sites
 
-The workflow names no scheduler: each job states cores, memory and a
-wall-clock runtime (calibrate's budget grows with `--calibrate`), and every
-job plans against a site named `compute`. With `-s unity.yml` (or a hosted
-catalog set in `~/.pegasusrc`) a
-[hosted site catalog](https://github.com/pegasushub/pegasus-site-catalogs)
-defines it; with no options `custom_sites.py` writes it to `sites.yml` as an
-HTCondor pool.
+Jobs run on a site named `compute`, defined by a centrally hosted
+[site catalog](https://github.com/pegasushub/pegasus-site-catalogs/tree/main/conf)
+— `-s unity.yml`, or one set once in `~/.pegasusrc` — which carries the
+partition, allocation and scratch for that resource. The generator writes no
+site catalog and never submits; it prints the `pegasus-plan` command. On a
+plain HTCondor pool with no catalog, generate with `-e condorpool` (Pegasus
+provides a default `condorpool` site). Long steps state a wall-clock runtime
+(4 h; calibrate's grows with `--calibrate`) because hosted batch catalogs
+default to about 2 h.
 
 ```sh
-./workflow_generator.py --gages gage-10109001                      # HTCondor pool
-./workflow_generator.py --gages gage-10109001 -s unity.yml --project my_lab
-./workflow_generator.py --gages gage-10109001 --site-style slurm \
-    --queue cpu --project my_lab                                   # Slurm, no hosted catalog
-pegasus-plan --submit -s compute -o local workflow.yml
+./workflow_generator.py --gages gage-10109001 -s unity.yml        # hosted catalog
+pegasus-plan --dir submit -s compute -o local --submit workflow.yml
+
+./workflow_generator.py --gages gage-10109001 -e condorpool       # plain HTCondor pool
+pegasus-plan --dir submit -s condorpool -o local --submit workflow.yml
 ```
 
 ```
--e / --execution-site     Site to plan against (default compute, the name
-                          hosted catalogs give their site)
 -s / --hosted-site-catalog FILE
                           Hosted site catalog, e.g. unity.yml; written to
                           pegasus.properties (default: ~/.pegasusrc's, if any)
---site-style auto|condor|slurm|none
-                          auto keeps an existing sites.yml entry or hosted
-                          catalog, else writes compute as an HTCondor pool
---queue, --project        Batch partition and allocation account
---site-scratch DIR        Slurm shared scratch (default ./work)
---site-profile NS:KEY=VALUE, --tag-profile TAG:NS:KEY=VALUE
-                          Extra profiles on the site or on tagged jobs
---shared-filesystem auto|yes|no
-                          Read inputs in place (auto: on for Slurm)
---sites-yml FILE          Local site catalog (default sites.yml)
+-e / --execution-site-name (alias --execution-site)
+                          Execution site name (default compute; condorpool on
+                          a plain HTCondor pool with no site catalog)
 ```
+
+`NextGen-Workflow.ipynb` runs the same `NextGenWorkflow` class interactively
+(the paper basin, `--calibrate 0`): its `create_sites_catalog()` writes a local
+HTCondor `compute` catalog, and it submits from an explicit cell.
 
 On a batch site the workflow directory is bound into both containers and
 inputs are read in place. The Pegasus worker package staged into the
@@ -252,7 +250,9 @@ pin first (newer than the paper's version).
 
 ## Outputs
 
-Staged to `output/`:
+Staged to `wf-output/` in the directory you planned from when run from the CLI
+(Pegasus's default `local` site — the generator writes no site catalog), or to
+`output/` when run from `NextGen-Workflow.ipynb`:
 
 ```
 output/
