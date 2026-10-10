@@ -113,8 +113,10 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ./workflow_generator.py --gages gage-10109001 --start 2017-10-01 --end 2021-09-30
 
-# 3. Plan and submit
-pegasus-plan --submit -s condorpool -o local workflow.yml
+# 3. Plan and submit (the generator prints this; it never submits itself).
+#    "compute" comes from a hosted site catalog — see Sites below; on a plain
+#    HTCondor pool, generate with -e condorpool and plan with -s condorpool.
+pegasus-plan --dir submit -s compute -o local --output-dir "$PWD/output" --submit workflow.yml
 
 # 4. Monitor / debug
 pegasus-status <run-dir>
@@ -173,8 +175,46 @@ Treat ghcr.io as a distribution channel and keep staging the local `.sif`. Detai
                           Apptainer/NextGen_Container.sif) or a registry URI
 --teehr-image PATH        Override the teehr_evaluation container
                           (default Apptainer/Teehr_Container.sif)
--e / --execution-site-name, -o / --output, -s / --skip-sites-catalog
+-o / --output             Output workflow file (default workflow.yml)
 ```
+
+### Sites
+
+Jobs run on a site named `compute`, defined by a centrally hosted
+[site catalog](https://github.com/pegasushub/pegasus-site-catalogs/tree/main/conf)
+— `-s unity.yml`, or one set once in `~/.pegasusrc` — which carries the
+partition, allocation and scratch for that resource. The generator writes no
+site catalog and never submits; it prints the `pegasus-plan` command. On a
+plain HTCondor pool with no catalog, generate with `-e condorpool` (Pegasus
+provides a default `condorpool` site). Long steps state a wall-clock runtime
+(4 h; calibrate's grows with `--calibrate`) because hosted batch catalogs
+default to about 2 h.
+
+```sh
+./workflow_generator.py --gages gage-10109001 -s unity.yml        # hosted catalog
+pegasus-plan --dir submit -s compute -o local --output-dir "$PWD/output" --submit workflow.yml
+
+./workflow_generator.py --gages gage-10109001 -e condorpool       # plain HTCondor pool
+pegasus-plan --dir submit -s condorpool -o local --output-dir "$PWD/output" --submit workflow.yml
+```
+
+```
+-s / --hosted-site-catalog FILE
+                          Hosted site catalog, e.g. unity.yml; written to
+                          pegasus.properties (default: ~/.pegasusrc's, if any)
+-e / --execution-site-name (alias --execution-site)
+                          Execution site name (default compute; condorpool on
+                          a plain HTCondor pool with no site catalog)
+```
+
+`NextGen-Workflow.ipynb` runs the same `NextGenWorkflow` class interactively
+(the paper basin, `--calibrate 0`): its `create_sites_catalog()` writes a local
+HTCondor `compute` catalog, and it submits from an explicit cell.
+
+On a batch site the workflow directory is bound into both containers and
+inputs are read in place. The Pegasus worker package staged into the
+containers is `x86_64_rhel_9`, which runs in both the Rocky 9 NextGen image
+and the Debian 12 TEEHR image.
 
 Multiple basins, reusing a cache you already have:
 
@@ -210,7 +250,9 @@ pin first (newer than the paper's version).
 
 ## Outputs
 
-Staged to `output/`:
+Staged to `output/` — by the CLI's plan command (it passes `--output-dir`,
+since the generator writes no site catalog and Pegasus's default `local` site
+would otherwise use `wf-output/`) and by `NextGen-Workflow.ipynb`:
 
 ```
 output/

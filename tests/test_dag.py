@@ -333,3 +333,34 @@ def test_every_transformation_has_a_wrapper(tmp_path):
         path = os.path.join(WF_DIR, "bin", f"{name}.py")
         assert os.path.exists(path), f"missing wrapper: bin/{name}.py"
         assert os.access(path, os.X_OK), f"wrapper not executable: bin/{name}.py"
+
+
+def test_cli_writes_no_site_catalog(tmp_path):
+    """The CLI never writes the execution site (pegasus-gromacs pattern):
+    no sites.yml, and every transformation is registered on 'compute'."""
+    generate(tmp_path)
+    assert not (tmp_path / "sites.yml").exists()
+    tc = yaml.safe_load(open(tmp_path / "transformations.yml"))
+    for tx in tc["transformations"]:
+        assert [s["name"] for s in tx["sites"]] == ["compute"], tx["name"]
+
+
+def test_hosted_site_catalog_in_properties(tmp_path):
+    """-s FILE names the hosted catalog in pegasus.properties."""
+    generate(tmp_path, "-s", "unity.yml")
+    props = open(tmp_path / "pegasus.properties").read()
+    assert "pegasus.catalog.site.repo.file = unity.yml" in props
+    assert not (tmp_path / "sites.yml").exists()
+
+
+def test_long_tools_carry_a_runtime(tmp_path):
+    """Tools that can outlast a hosted batch catalog's ~2 h default state
+    their own runtime; calibrate's grows with --calibrate."""
+    generate(tmp_path, "--calibrate", "30", "--training-start", "2020-10-01")
+    tc = yaml.safe_load(open(tmp_path / "transformations.yml"))
+    runtime = {tx["name"]: tx.get("profiles", {}).get("pegasus", {}).get("runtime")
+               for tx in tc["transformations"]}
+    for name in ("fetch_hydrofabric", "generate_forcings", "run_nextgen",
+                 "apply_params"):
+        assert int(runtime[name]) >= 4 * 3600, name
+    assert int(runtime["calibrate"]) == 31 * 15 * 60

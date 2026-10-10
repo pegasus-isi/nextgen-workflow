@@ -22,6 +22,17 @@ The CONUS hydrofabric is fetched by a single shared job and reused by every gage
 Usage:
     ./workflow_generator.py --gages gage-10109001 --start 2017-10-01 --end 2021-09-30
     ./workflow_generator.py --gages-file config/gages.txt --calibrate 6
+
+    # A centrally hosted site catalog, or a plain HTCondor pool:
+    ./workflow_generator.py --gages gage-10109001 -s unity.yml
+    ./workflow_generator.py --gages gage-10109001 --calibrate 0 -e condorpool
+
+Sites follow pegasus-isi/pegasus-gromacs: jobs run on a site named "compute",
+defined by a centrally hosted site catalog (-s access-pegasus.yml, ...;
+https://github.com/pegasushub/pegasus-site-catalogs) or by one in
+~/.pegasusrc. The generator writes no site catalog and never submits; it
+prints the pegasus-plan command. NextGen-Workflow.ipynb drives the same class
+interactively.
 """
 
 import argparse
@@ -39,12 +50,17 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# Per-tool resource configuration. The NextGen run multiprocesses across
-# catchments; TEEHR starts a local Spark session and needs Java plus headroom.
+# Per-tool resource configuration for the transformation catalog. The NextGen
+# run multiprocesses across catchments; TEEHR starts a local Spark session and
+# needs Java plus headroom. runtime (wall-clock seconds) is set only on tools
+# that can outlast the ~2 h hosted batch catalogs give a job by default: the
+# demo basin's model run takes 5-7 minutes, but larger basins, longer periods
+# and multi-GB downloads (hydrofabric, AORC forcings) take far longer.
+# calibrate's budget is raised with --calibrate (CALIBRATE_SECONDS_PER_REPETITION).
 TOOL_CONFIGS = {
-    "fetch_hydrofabric": {"memory": "8 GB", "cores": 1},
+    "fetch_hydrofabric": {"memory": "8 GB", "cores": 1, "runtime": 4 * 3600},
     "subset_hydrofabric": {"memory": "8 GB", "cores": 1},
-    "generate_forcings": {"memory": "12 GB", "cores": 2},
+    "generate_forcings": {"memory": "12 GB", "cores": 2, "runtime": 4 * 3600},
     "generate_realization": {"memory": "4 GB", "cores": 1},
     "assemble_rundir": {"memory": "2 GB", "cores": 1},
     "fetch_usgs_obs": {"memory": "2 GB", "cores": 1},
@@ -60,14 +76,22 @@ TOOL_CONFIGS = {
     # trial 5 twice in run0003. Match the request to what ngen actually
     # spawns. On a 15.6 GB node the 14 GB request already limits these to one
     # per node, so widening cores costs no throughput.
-    "run_nextgen": {"memory": "14 GB", "cores": 8},
+    "run_nextgen": {"memory": "14 GB", "cores": 8, "runtime": 4 * 3600},
     "outputs_analysis": {"memory": "8 GB", "cores": 1},
     "teehr_evaluation": {"memory": "12 GB", "cores": 2},
-    "calibrate": {"memory": "14 GB", "cores": 8},
+    "calibrate": {"memory": "14 GB", "cores": 8, "runtime": 4 * 3600},
     "select_best_params": {"memory": "2 GB", "cores": 1},
-    "apply_params": {"memory": "14 GB", "cores": 8},
+    "apply_params": {"memory": "14 GB", "cores": 8, "runtime": 4 * 3600},
     "summarize": {"memory": "2 GB", "cores": 1},
 }
+
+# Wall-clock budget per DDS repetition for a calibrate job: each repetition is
+# a full model run (5-7 minutes on the demo basin), so allow about twice that.
+# The calibrate transformation's runtime is max(TOOL_CONFIGS value,
+# (repetitions + 1) x this) — the +1 covers the untouched-baseline candidate
+# the job also evaluates. It is set in the Transformation Catalog, not on the
+# jobs: TC profiles take precedence over job profiles at plan time.
+CALIBRATE_SECONDS_PER_REPETITION = 15 * 60
 
 # Support modules vendored from the paper's HydroShare resource. These are called
 # by the wrapper scripts, so they belong in the Replica Catalog (not the
@@ -95,6 +119,8 @@ class NextGenWorkflow:
     shared_scratch_dir = None
     local_storage_dir = None
     wf_name = "nextgen"
+    # Set by main() from --calibrate; sizes the calibrate runtime budget.
+    calibrate_repetitions = 0
 
     def __init__(self, dagfile="workflow.yml", container_image=None,
                  teehr_image=None):
@@ -146,19 +172,67 @@ class NextGenWorkflow:
         self.wf.write(file=self.dagfile)
 
     # ------------------------------------------------------------------
+    # Plan / run / monitor (thin wrappers over the Pegasus API Workflow
+    # object, for interactive use e.g. from a Jupyter notebook)
+    # ------------------------------------------------------------------
+    def plan_submit(self, exec_site_name="compute", raise_errors=False):
+        try:
+            self.wf.plan(
+                dir="submit",
+                sites=[exec_site_name],
+                output_sites=["local"],
+                cleanup="none",
+                verbose=1,
+                submit=True,
+            )
+        except PegasusClientError as e:
+            print(e)
+            if raise_errors:
+                raise
+
+    def status(self):
+        try:
+            self.wf.status(long=True)
+        except PegasusClientError as e:
+            print(e)
+
+    def wait(self):
+        try:
+            self.wf.wait()
+        except PegasusClientError as e:
+            print(e)
+
+    def statistics(self):
+        try:
+            self.wf.statistics()
+        except PegasusClientError as e:
+            print(e)
+
+    # ------------------------------------------------------------------
     # Properties
     # ------------------------------------------------------------------
-    def create_pegasus_properties(self):
+    def create_pegasus_properties(self, hosted_site_catalog=None):
         self.props = Properties()
         self.props["pegasus.transfer.threads"] = "16"
         # The hydrofabric cache and run-directory tarballs are large; give
         # integrity checking a chance to be skipped on the biggest transfers.
         self.props["pegasus.integrity.checking"] = "nosymlink"
+        if hosted_site_catalog:
+            # Use one of Pegasus' centrally hosted site catalogs instead of
+            # a locally generated one. pegasus-plan downloads and caches the
+            # named file from the catalog repository at plan time.
+            # https://pegasus.isi.edu/documentation/reference-guide/catalogs.html#centrally-hosted-site-catalogs
+            self.props["pegasus.catalog.site.repo.file"] = hosted_site_catalog
 
     # ------------------------------------------------------------------
     # Site Catalog
+    #
+    # Not used by the CLI below by default — pegasus-plan resolves the site
+    # catalog from a centrally hosted one instead (see -s/--hosted-site-catalog
+    # and create_pegasus_properties above). Kept for programmatic/notebook use
+    # when a self-contained, locally generated HTCondor site catalog is wanted.
     # ------------------------------------------------------------------
-    def create_sites_catalog(self, exec_site_name="condorpool"):
+    def create_sites_catalog(self, exec_site_name="compute"):
         self.sc = SiteCatalog()
 
         local = Site("local").add_directories(
@@ -185,7 +259,10 @@ class NextGenWorkflow:
     # ------------------------------------------------------------------
     # Transformation Catalog
     # ------------------------------------------------------------------
-    def create_transformation_catalog(self, exec_site_name="condorpool"):
+    def create_transformation_catalog(self, exec_site_name="compute"):
+        """Containers and transformations, registered on the execution site;
+        the scripts and .sif images live on "local" (the submit host) and are
+        staged."""
         self.tc = TransformationCatalog()
 
         ngen_url, ngen_site = self._image(
@@ -218,8 +295,15 @@ class NextGenWorkflow:
                 is_stageable=True,
                 container=tool_container,
             ).add_pegasus_profile(
-                memory=config["memory"], cores=config.get("cores", 1)
+                memory=config["memory"],
+                cores=config.get("cores", 1),
             )
+            runtime = config.get("runtime")
+            if tool_name == "calibrate":
+                runtime = max(runtime, (self.calibrate_repetitions + 1)
+                              * CALIBRATE_SECONDS_PER_REPETITION)
+            if runtime:
+                tx.add_pegasus_profile(runtime=runtime)
             transformations.append(tx)
 
         self.tc.add_containers(container, teehr_container)
@@ -600,15 +684,33 @@ Examples:
 
   # Enable the SPOTPY DDS calibration branch (expensive: a model run per iteration)
   %(prog)s --gages gage-10109001 --calibrate 6 --training-start 2020-10-01
+
+  # A centrally hosted site catalog, or a plain HTCondor pool (no catalog)
+  %(prog)s --gages gage-10109001 -s unity.yml
+  %(prog)s --gages gage-10109001 --calibrate 0 -e condorpool
+
+Writes the workflow and its catalogs; it does not plan or submit. Plan with
+the command it prints, or from NextGen-Workflow.ipynb (plan_submit()).
 """,
     )
 
     # --- Standard Pegasus arguments ---
-    parser.add_argument("-s", "--skip-sites-catalog", action="store_true",
-                        help="Skip site catalog creation")
-    parser.add_argument("-e", "--execution-site-name", metavar="STR", type=str,
-                        default="condorpool",
-                        help="Execution site name (default: condorpool)")
+    parser.add_argument("-s", "--hosted-site-catalog", metavar="FILE",
+                        type=str, default=None,
+                        help="Name of a Pegasus centrally hosted site catalog "
+                             "to plan against (e.g. access-pegasus.yml), "
+                             "instead of a locally generated one. Sets "
+                             "pegasus.catalog.site.repo.file; see "
+                             "https://pegasus.isi.edu/documentation/"
+                             "reference-guide/catalogs.html"
+                             "#centrally-hosted-site-catalogs")
+    # --execution-site is kept as an alias: earlier releases used that name.
+    parser.add_argument("-e", "--execution-site-name", "--execution-site",
+                        dest="execution_site_name", metavar="STR", type=str,
+                        default="compute",
+                        help="Execution site name (default: compute; "
+                             "condorpool on a plain HTCondor pool with no "
+                             "site catalog)")
     parser.add_argument("-o", "--output", metavar="STR", type=str,
                         default="workflow.yml",
                         help="Output file (default: workflow.yml)")
@@ -720,6 +822,9 @@ Examples:
     )
     logger.info(f"Estimated jobs: ~{est_jobs}")
     logger.info(f"Execution site: {args.execution_site_name}")
+    logger.info(
+        f"Hosted site catalog: {args.hosted_site_catalog or '(none — supply your own site catalog)'}"
+    )
     logger.info(f"Output file: {args.output}")
     logger.info("=" * 70)
 
@@ -729,24 +834,22 @@ Examples:
             teehr_image=args.teehr_image
         )
 
-        workflow.create_pegasus_properties()
-
-        if not args.skip_sites_catalog:
-            workflow.create_sites_catalog(
-                exec_site_name=args.execution_site_name
-            )
-
+        workflow.create_pegasus_properties(
+            hosted_site_catalog=args.hosted_site_catalog)
+        workflow.calibrate_repetitions = args.calibrate
         workflow.create_transformation_catalog(
-            exec_site_name=args.execution_site_name
-        )
+            exec_site_name=args.execution_site_name)
         workflow.create_replica_catalog(hydrofabric_tar=args.hydrofabric_tar)
         workflow.create_workflow(args)
         workflow.write()
 
         logger.info(f"\nWorkflow written to {args.output}")
+        # --output-dir: no site catalog defines "local", so Pegasus's
+        # built-in local site would otherwise stage outputs to ./wf-output.
         logger.info(
-            f"Submit: pegasus-plan --submit "
-            f"-s {args.execution_site_name} -o local {args.output}"
+            f"Plan and submit: pegasus-plan --dir submit "
+            f"-s {args.execution_site_name} -o local "
+            f"--output-dir {workflow.local_storage_dir} --submit {args.output}"
         )
 
     except Exception as e:
