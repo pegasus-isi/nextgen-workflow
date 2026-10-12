@@ -206,15 +206,8 @@ def _nwm_retro_cfs(nwm_feature_id, start, end):
     return flow.to_series() * 35.3147
 
 
-def fallback_evaluation(gage, gage_path, obs_csv, start, end, training_start):
-    """Score NextGen (and NWM v3.0) vs observed flow by period.
-
-    Hourly is the primary resolution — the paper's Fig. 10 metrics are hourly
-    (AUTHOR_REVIEW.md #2) — with a daily-mean aggregate emitted alongside for
-    continuity with earlier runs. When the obs fetch degraded to daily values,
-    an hourly join would only sample one midnight value per day, so only the
-    daily rows are produced.
-    """
+def _sim_series(gage_path, start):
+    """(routing feature id, hourly simulated outlet flow in cfs)."""
     import pandas as pd
 
     feature_id = np_util.routing_feature_id(gage_path)
@@ -229,8 +222,46 @@ def fallback_evaluation(gage, gage_path, obs_csv, start, end, training_start):
         # t-route emits one value per model hour from the simulation start.
         sim_cfs.index = pd.date_range(start=start, periods=len(sim_cfs),
                                       freq="h")
+    return feature_id, sim_cfs
 
+
+def _nwm_series(gage, gage_path, start, end):
+    """Hourly NWM v3.0 retrospective flow in cfs for the gage's reach.
+
+    The TEEHR warehouse crosswalk misses some gages — this workflow's demo
+    gage included — so resolve the reach (NLDI first, as the paper's notebook
+    does) and read NOAA's public retrospective directly.
+    """
+    for source, fid in _nwm_feature_id_candidates(gage, gage_path):
+        try:
+            nwm_cfs = _nwm_retro_cfs(fid, start, end)
+            print(f"NWM v3.0 reach for {gage}: {fid} (from {source})")
+            return nwm_cfs
+        except (KeyError, ValueError) as exc:
+            print(f"NWM reach candidate {fid} (from {source}) "
+                  f"not usable: {exc}", file=sys.stderr)
+    raise ValueError("no candidate reach id found in the NWM v3.0 retrospective")
+
+
+def fallback_evaluation(gage, gage_path, obs_csv, start, end, training_start,
+                        series=None):
+    """Score NextGen (and NWM v3.0) vs observed flow by period.
+
+    Hourly is the primary resolution — the paper's Fig. 10 metrics are hourly
+    (AUTHOR_REVIEW.md #2) — with a daily-mean aggregate emitted alongside for
+    continuity with earlier runs. When the obs fetch degraded to daily values,
+    an hourly join would only sample one midnight value per day, so only the
+    daily rows are produced.
+
+    When ``series`` is a dict, the hourly series used for scoring are stored
+    in it ("nextgen", "usgs", "nwm") so the hydrograph can reuse them.
+    """
+    import pandas as pd
+
+    feature_id, sim_cfs = _sim_series(gage_path, start)
     obs = np_util.obs_series_cfs(obs_csv)
+    if series is not None:
+        series["nextgen"], series["usgs"] = sim_cfs, obs
     resolutions = (
         ("hourly", "daily") if np_util.obs_resolution(obs) == "hourly"
         else ("daily",)
@@ -270,24 +301,12 @@ def fallback_evaluation(gage, gage_path, obs_csv, start, end, training_start):
     if obs is not None:
         rows.extend(score(sim_cfs, "nextgen_simulated"))
 
-        # NWM v3.0 benchmark via direct fetch (SPEC section 7 risk 2). The
-        # TEEHR warehouse crosswalk misses some gages — this workflow's demo
-        # gage included — so resolve the reach and read NOAA's public
-        # retrospective ourselves. Best-effort: the USGS comparison above
-        # stands even if this fails.
+        # NWM v3.0 benchmark via direct fetch (SPEC section 7 risk 2).
+        # Best-effort: the USGS comparison above stands even if this fails.
         try:
-            nwm_cfs = None
-            for source, fid in _nwm_feature_id_candidates(gage, gage_path):
-                try:
-                    nwm_cfs = _nwm_retro_cfs(fid, start, end)
-                    print(f"NWM v3.0 reach for {gage}: {fid} (from {source})")
-                    break
-                except (KeyError, ValueError) as exc:
-                    print(f"NWM reach candidate {fid} (from {source}) "
-                          f"not usable: {exc}", file=sys.stderr)
-            if nwm_cfs is None:
-                raise ValueError("no candidate reach id found in the "
-                                 "NWM v3.0 retrospective")
+            nwm_cfs = _nwm_series(gage, gage_path, start, end)
+            if series is not None:
+                series["nwm"] = nwm_cfs
             rows.extend(score(nwm_cfs, "nwm30_retrospective"))
         except Exception as exc:  # noqa: BLE001
             import traceback
@@ -385,6 +404,102 @@ def plot_metrics(gage, rows, plot_path):
             open(plot_path, "wb").close()
 
 
+CFS_PER_CMS = 35.3147
+
+
+def _fig10_scores(rows, which, period):
+    """Hourly (KGE, NSE) for NextGen or NWM in one period, from metric rows."""
+    for r in rows:
+        secondary = str(r.get("secondary", ""))
+        is_nwm = "nwm" in secondary
+        if (which == "nwm") != is_nwm or r.get("period") != period:
+            continue
+        if r.get("resolution", "hourly") != "hourly":
+            continue
+        if r.get("kge") is not None:
+            return r.get("kge"), r.get("nse")
+    return None, None
+
+
+def plot_hydrograph(gage, gage_path, obs_csv, start, end, training_start,
+                    rows, series, plot_path):
+    """Hydrograph laid out like the paper's Fig. 10.
+
+    Observed USGS flow, the NWM v3.0 retrospective and the NextGen simulation
+    in m^3/s, with the spin-up and calibration periods shaded and each
+    period's hourly KGE/NSE printed above it. Reuses the series the fallback
+    scored; on the TEEHR path it loads them (NWM best-effort). A plotting
+    failure writes an empty file rather than failing a finished evaluation.
+    """
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        import pandas as pd
+
+        if "nextgen" not in series:
+            _, series["nextgen"] = _sim_series(gage_path, start)
+            series["usgs"] = np_util.obs_series_cfs(obs_csv)
+            try:
+                series["nwm"] = _nwm_series(gage, gage_path, start, end)
+            except Exception as exc:  # noqa: BLE001
+                print(f"NWM v3.0 series unavailable for the hydrograph "
+                      f"({exc})", file=sys.stderr)
+
+        cut = pd.Timestamp(training_start)
+        t0 = series["nextgen"].index.min()
+        t1 = series["nextgen"].index.max()
+
+        fig, ax = plt.subplots(figsize=(12, 5.5))
+        ax.axvspan(t0, cut, color="0.92", zorder=0)
+        ax.axvspan(cut, t1, color="#e6f2ff", zorder=0)
+        ax.axvline(cut, color="0.45", linestyle=":", linewidth=0.9, zorder=1)
+
+        site = str(gage).split("-")[-1]
+        if series.get("usgs") is not None:
+            obs = series["usgs"] / CFS_PER_CMS
+            ax.plot(obs.index, obs.values, color="black", linewidth=1.6,
+                    label=f"Observed (USGS {site})", zorder=3)
+        if series.get("nwm") is not None:
+            nwm = series["nwm"] / CFS_PER_CMS
+            ax.plot(nwm.index, nwm.values, color="#ff7f0e", linestyle="--",
+                    linewidth=1.3, alpha=0.9, label="NWM v3.0 Retrospective",
+                    zorder=2)
+        sim = series["nextgen"] / CFS_PER_CMS
+        ax.plot(sim.index, sim.values, color="#1f77b4", linestyle="--",
+                linewidth=1.3, alpha=0.9, label="NextGen Simulation", zorder=2)
+
+        ymax = ax.get_ylim()[1]
+        ax.set_ylim(0, ymax * 1.25)
+        for period, (a, b), title in (("spinup", (t0, cut), "Spin-up"),
+                                      ("evaluation", (cut, t1), "Calibration")):
+            lines = [title]
+            for which, name in (("nextgen", "NextGen"), ("nwm", "NWM v3.0")):
+                kge, nse = _fig10_scores(rows, which, period)
+                if kge is not None:
+                    nse_txt = f"{nse:.3f}" if nse is not None else "—"
+                    lines.append(f"{name}: KGE {kge:.3f}, NSE {nse_txt}")
+            ax.text(a + (b - a) / 2, ymax * 1.22, "\n".join(lines),
+                    ha="center", va="top", fontsize=9)
+
+        ax.set_ylabel("Streamflow (m³/s)")
+        ax.grid(True, alpha=0.25, linestyle="--")
+        ax.legend(loc="center left", fontsize=9)
+        ax.set_title(f"{gage}: observed vs simulated streamflow")
+        fig.tight_layout()
+        np_util.ensure_parent(plot_path)
+        fig.savefig(plot_path, dpi=150)
+        plt.close(fig)
+        print(f"Wrote {plot_path}")
+    except Exception as exc:  # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        print(f"Hydrograph skipped ({exc}); writing an empty file",
+              file=sys.stderr)
+        np_util.ensure_parent(plot_path)
+        open(plot_path, "wb").close()
+
+
 def _ensure_declared_outputs(args):
     """Create empty declared outputs before a failing exit.
 
@@ -396,10 +511,11 @@ def _ensure_declared_outputs(args):
         np_util.ensure_parent(args.output_metrics)
         with open(args.output_metrics, "w") as fh:
             fh.write("gage,period,method,n\n")
-    if args.output_plot and not os.path.exists(args.output_plot):
-        np_util.ensure_parent(args.output_plot)
-        with open(args.output_plot, "wb"):
-            pass
+    for plot in (args.output_plot, args.output_hydrograph):
+        if plot and not os.path.exists(plot):
+            np_util.ensure_parent(plot)
+            with open(plot, "wb"):
+                pass
 
 
 def main():
@@ -415,6 +531,9 @@ def main():
                         help="Boundary between spin-up and evaluation periods")
     parser.add_argument("--output-metrics", required=True, help="Output metrics CSV")
     parser.add_argument("--output-plot", required=True, help="Output PNG")
+    parser.add_argument("--output-hydrograph", default=None,
+                        help="Output PNG: hydrograph laid out like the paper's "
+                             "Fig. 10 (USGS, NWM v3.0, NextGen)")
     args = parser.parse_args()
 
     try:
@@ -438,13 +557,14 @@ def _main(args):
     np_util.extract_tar(args.run_tar, gage_path)
     np_util.data_root(home)
 
+    series = {}
     rows = try_teehr(
         args.gage, gage_path, args.start, args.end, args.training_start
     )
     if rows is None:
         rows = fallback_evaluation(
             args.gage, gage_path, args.obs, args.start, args.end,
-            args.training_start,
+            args.training_start, series=series,
         )
 
     import pandas as pd
@@ -456,6 +576,10 @@ def _main(args):
     print(f"Wrote {args.output_metrics}")
 
     plot_metrics(args.gage, rows, args.output_plot)
+    if args.output_hydrograph:
+        plot_hydrograph(args.gage, gage_path, args.obs, args.start, args.end,
+                        args.training_start, rows, series,
+                        args.output_hydrograph)
 
 
 if __name__ == "__main__":

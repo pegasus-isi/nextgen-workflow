@@ -6,7 +6,7 @@
 results vs the publication in `PAPER_COMPARISON.md`: uncalibrated and NWM
 metrics reproduce Fig. 10 within 0.01–0.05 KGE, substantially satisfying
 gate 4). Sections 1–12 are the plan as reviewed; **§13 records where the
-as-built implementation deviates from it**. Open: the vendored calibration
+as-built implementation deviates from it**. Open: the reused calibration
 objective misbehaves under current NGIAB configs (§13.11).
 **Source paper**: Nassar, A., et al. 2026, "A cloud-based JupyterHub platform for community
 research with the NextGen water resources modeling framework," *Environmental Modelling &
@@ -388,7 +388,7 @@ The spec text above is unchanged; where they disagree, this section is current.
     values within 0.01–0.05 KGE — §11's "scientific expectation" and the
     substance of §12 gate 4 are met. The calibration leg does not reproduce:
     DDS improved its own objective (to a peak of −0.39 hourly KGE) while
-    *degrading* timestamp-aligned skill, implicating the vendored
+    *degrading* timestamp-aligned skill, implicating the reused
     `cal_utils` objective path — length-based obs/sim alignment and/or the
     global `realization.json` `model_params` override not reaching
     per-catchment CFE ini files in ngiab-4.9.1 configs. Diagnostic plan in

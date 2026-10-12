@@ -10,7 +10,7 @@ reproduction got there.
 
 Every published quantity is reproduced.
 run0006 matched the uncalibrated-model and NWM v3.0 metrics within 0.01–0.05
-KGE; its calibration leg exposed real defects in the vendored calibration
+KGE; its calibration leg exposed real defects in the reused calibration
 code (documented below, since fixed), and the re-run with fixes and parallel
 multi-start DDS (run0007) **met and slightly exceeded the paper's calibrated
 result: hourly KGE 0.898 vs the published 0.893**, with calibration now
@@ -154,7 +154,26 @@ headroom calibration has to demonstrate.
 ## The calibration anomaly
 
 *(Revised 2026-08-01 after an independent code review — an earlier version of
-this section misread the objective column.)*
+this section misread the objective column. Framing of the three defects
+sharpened 2026-09-03; see the note directly below.)*
+
+**Are these defects in the paper's code, or artifacts of our implementation?**
+All three are behaviors of the authors' own functions, reachable by running
+their code — none is introduced by the Pegasus orchestration. But two of the
+three were *latent* in the paper's era and only became consequential with
+modern inputs, and that distinction should be stated rather than glossed:
+
+| Defect | Era-independent? | Why |
+|---|---|---|
+| Defaults never a candidate | **No — latent** | When defaults scored KGE 0.200, installing the best sample was always an improvement. It only degrades a model once the defaults are strong (0.860 today). |
+| Positional alignment of observed vs simulated | **Yes** | Aligning by array position is only safe if both series start at the same instant and neither has a gap. This gauge's record starts 31 h after the simulation and carries a 16 h gap, so the pairing drifts. Whether the original's `obs[1:]` was meant to offset a routing step is unknowable from the published code — and moot, because the gaps break it either way. |
+| `model_params` replaced, not merged | **No — latent** | Replacing an empty block is the same as merging into it. ngiab-4.9.1 realizations ship `model_params` pre-populated, which is what makes the overwrite destructive. The silent no-op on a module-name mismatch is era-independent. |
+
+Where the fixes live also differs, and matters to anyone auditing the reused
+code: defects 2 and 3 are `PEGASUS PATCH` edits inside `bin/lib/cal_utils.py`,
+diffable against `references/original_utils/`. Defect 1 is corrected in our
+own `bin/calibrate.py` — it scores the untouched configuration as candidate
+zero — so a diff of the authors' module shows **two** changes, not three.
 
 The iteration log's `objective_value` is **not KGE — it is KGE − 1**
 (`cal_utils.py` subtracts 1 before handing the score to DDS; the raw `KGE`
@@ -166,7 +185,7 @@ objective-vs-reality paradox.
 
 The real finding is simpler and worse: **DDS never beat the default
 parameterization (0.860), and the workflow installed its inferior winner
-anyway.** The vendored calibration loop overwrites the model configs from the
+anyway.** The reused calibration loop overwrites the model configs from the
 very first sample and only ever selects among *sampled* vectors — the
 untouched baseline is never evaluated as a candidate. The paper never noticed
 because their era's defaults were poor (KGE 0.200): any decent DDS result was

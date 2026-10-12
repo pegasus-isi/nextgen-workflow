@@ -643,6 +643,9 @@ class NextGenWorkflow:
 
         teehr_csv = File(f"analysis/{gage}_teehr_metrics{suffix}.csv")
         teehr_png = File(f"plots/{gage}_teehr{suffix}.png")
+        # Hydrograph laid out like the paper's Fig. 10 (USGS, NWM v3.0 and
+        # NextGen, spin-up and calibration periods shaded).
+        fig10_png = File(f"plots/{gage}_hydrograph_fig10{suffix}.png")
         teehr_job = (
             Job("teehr_evaluation", _id=f"teehr_{safe}{suffix}",
                 node_label=f"teehr_{gage}{suffix}")
@@ -655,10 +658,12 @@ class NextGenWorkflow:
                 "--training-start", args.training_start or args.start,
                 "--output-metrics", teehr_csv,
                 "--output-plot", teehr_png,
+                "--output-hydrograph", fig10_png,
             )
             .add_inputs(run_tar, obs_csv, *lib_files)
             .add_outputs(teehr_csv, stage_out=True, register_replica=False)
             .add_outputs(teehr_png, stage_out=True, register_replica=False)
+            .add_outputs(fig10_png, stage_out=True, register_replica=False)
             .add_pegasus_profiles(label=gage)
             .add_dagman_profile(retry="2")
         )
