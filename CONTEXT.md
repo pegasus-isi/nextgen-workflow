@@ -21,12 +21,12 @@ DAG generation is empirically validated.
 |------|-----------|
 | `workflow_generator.py` | 12 transformations, per-gage scatter, `8N+2` jobs (`12N+2` with `--calibrate N`) |
 | `bin/*.py` | 12 wrapper scripts, one per transformation |
-| `bin/lib/` | 4 utility modules **vendored from the paper** + `ngiab_pegasus.py` (new) |
+| `bin/lib/` | 4 utility modules **reused from the paper** + `ngiab_pegasus.py` (new) |
 | `tests/test_dag.py` | 18 generator tests — validation gate 1 |
 | `run_manual.sh` | Step-by-step local run — validation gate 3 |
 | `Apptainer/NextGen_Container.def` | `Bootstrap: docker` / `From: awiciroh/ciroh-ngen-image:v1.9.0` (`Docker/NextGen_Dockerfile` retained as a fallback) |
 | `references/notebooks/` | The paper's 5 original notebooks + HydroShare README |
-| `references/original_utils/` | **Unpatched** copies of the vendored modules |
+| `references/original_utils/` | **Unpatched** copies of the reused modules |
 | `SPEC.md` | The conversion plan (moved here from `../agu/`) |
 | `config/gages.txt` | Gage list; currently just the paper's demo basin |
 
@@ -184,7 +184,7 @@ Ordered by how likely they are to bite. Also in `README.md`.
 
 ## Decisions worth not re-litigating
 
-- **Vendored the paper's own utility modules** rather than reimplementing the
+- **Reused the paper's own utility modules** rather than reimplementing the
   analysis and calibration math. `references/original_utils/` holds the unpatched
   copies; `diff` against `bin/lib/` shows the only two changes, both marked
   `PEGASUS PATCH`: the hardcoded `/home/jovyan/ngiab_preprocess_output` root now

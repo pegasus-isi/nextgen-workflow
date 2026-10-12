@@ -29,7 +29,7 @@ Repo: https://github.com/pegasus-isi/nextgen-workflow · License:
 validated under Pegasus, and the complete comparison against the publication
 is closed — see [`PAPER_COMPARISON.md`](PAPER_COMPARISON.md). Uncalibrated
 NextGen and NWM v3.0 metrics match the published Fig. 10 values within
-0.01–0.05 KGE, and after fixing defects found in the paper's own vendored
+0.01–0.05 KGE, and after fixing defects found in the paper's own reused
 calibration code (Known gaps #4), the parallel multi-start calibration
 reached hourly KGE **0.898 vs the paper's 0.893**, improving the model from
 its (already strong, pre-calibrated) modern defaults of 0.860 to 0.901 daily
@@ -284,7 +284,7 @@ is separately archived. `assemble_rundir` exists because the prep branches emit
 loose subtrees that something has to merge — without it, `run_nextgen` would
 declare an input no job produces.
 
-**Vendored notebook utilities.** `bin/lib/` holds the paper's own utility modules
+**Reused notebook utilities.** `bin/lib/` holds the paper's own utility modules
 (`ngen_outputs_utils.py`, `forcings_utils.py`, `cal_utils.py`, `ngiab_utils.py`)
 so the analysis and calibration math matches the publication. They are registered
 in the Replica Catalog and staged into each job. Two small patches were needed,
@@ -383,7 +383,7 @@ remains:
    diffing CSVs remains undone.
 4. ~~Calibration could install parameters worse than the defaults~~
    **Resolved 2026-08-03** (full story in `PAPER_COMPARISON.md`): after a
-   code review found an off-by-one in the vendored objective's positional
+   code review found an off-by-one in the reused objective's positional
    obs/sim alignment, a destructive `model_params` replace, and — decisively
    — that the untouched baseline was never a candidate, all three were fixed
    (`PEGASUS PATCH`es + wrapper changes; a precedence experiment confirmed
